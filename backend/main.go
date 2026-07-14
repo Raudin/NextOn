@@ -312,21 +312,35 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	var details *MediaDetails
 
-	detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d", mediaType, id)
-	var response tmdbMediaDetailsResponse
-	if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
-		"append_to_response": "credits",
-	}, &response); err != nil {
-		log.Printf("Error fetching TMDB media details for %s/%d: %v", mediaType, id, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch media details"})
-		return
+	if apiKey == "dummy" {
+		var ok bool
+		details, ok = getMockMediaDetails(mediaType, id)
+		if !ok {
+			details = getFallbackMediaDetails(mediaType, id)
+		}
+	} else {
+		detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d", mediaType, id)
+		var response tmdbMediaDetailsResponse
+		if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
+			"append_to_response": "credits",
+		}, &response); err != nil {
+			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
+			var ok bool
+			details, ok = getMockMediaDetails(mediaType, id)
+			if !ok {
+				details = getFallbackMediaDetails(mediaType, id)
+			}
+		} else {
+			detailsVal := response.MediaDetails
+			detailsVal.ID = id
+			detailsVal.MediaType = mediaType
+			detailsVal.Cast = topCast(response.Credits.Cast, 12)
+			details = &detailsVal
+		}
 	}
 
-	details := response.MediaDetails
-	details.ID = id
-	details.MediaType = mediaType
-	details.Cast = topCast(response.Credits.Cast, 12)
 	c.JSON(http.StatusOK, details)
 }
 
@@ -343,13 +357,29 @@ func handleSeasonDetails(c *gin.Context) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	var season *SeasonDetails
 
-	seasonURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d", seriesID, seasonNum)
-	var season SeasonDetails
-	if err := tmdbGet(seasonURL, apiKey, &season); err != nil {
-		log.Printf("Error fetching TMDB season details: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch season details"})
-		return
+	if apiKey == "dummy" {
+		var ok bool
+		season, ok = getMockSeasonDetails(seriesID, seasonNum)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Season not found in mock"})
+			return
+		}
+	} else {
+		seasonURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d", seriesID, seasonNum)
+		var s SeasonDetails
+		if err := tmdbGet(seasonURL, apiKey, &s); err != nil {
+			log.Printf("Error fetching TMDB season details: %v. Falling back to mock.", err)
+			var ok bool
+			season, ok = getMockSeasonDetails(seriesID, seasonNum)
+			if !ok {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch season details"})
+				return
+			}
+		} else {
+			season = &s
+		}
 	}
 	c.JSON(http.StatusOK, season)
 }
@@ -372,13 +402,29 @@ func handleEpisodeDetails(c *gin.Context) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	var episode *Episode
 
-	episodeURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d/episode/%d", seriesID, seasonNum, episodeNum)
-	var episode Episode
-	if err := tmdbGet(episodeURL, apiKey, &episode); err != nil {
-		log.Printf("Error fetching TMDB episode details: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch episode details"})
-		return
+	if apiKey == "dummy" {
+		var ok bool
+		episode, ok = getMockEpisodeDetails(seriesID, seasonNum, episodeNum)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Episode not found in mock"})
+			return
+		}
+	} else {
+		episodeURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d/episode/%d", seriesID, seasonNum, episodeNum)
+		var ep Episode
+		if err := tmdbGet(episodeURL, apiKey, &ep); err != nil {
+			log.Printf("Error fetching TMDB episode details: %v. Falling back to mock.", err)
+			var ok bool
+			episode, ok = getMockEpisodeDetails(seriesID, seasonNum, episodeNum)
+			if !ok {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch episode details"})
+				return
+			}
+		} else {
+			episode = &ep
+		}
 	}
 	c.JSON(http.StatusOK, episode)
 }
@@ -581,9 +627,20 @@ func handleDiscover(c *gin.Context) {
 	}
 
 	log.Println("Cache expired or empty. Fetching fresh data...")
-	data, err := fetchDiscoverData()
+	var data *DiscoverResponse
+	var err error
+	if os.Getenv("TMDB_API_KEY") == "dummy" {
+		data = getMockDiscoverData()
+	} else {
+		data, err = fetchDiscoverData()
+		if err != nil {
+			log.Printf("Error fetching discover data: %v. Falling back to mock.", err)
+			data = getMockDiscoverData()
+			err = nil
+		}
+	}
+
 	if err != nil {
-		log.Printf("Error fetching discover data: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch discover data"})
 		return
 	}
