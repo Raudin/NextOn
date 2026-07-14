@@ -1,0 +1,229 @@
+import Constants from "expo-constants";
+import { Platform } from "react-native";
+
+export const IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500";
+export const PROFILE_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w185";
+export const BACKDROP_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w780";
+
+export interface TMDBMedia {
+  id: number;
+  title?: string;
+  name?: string;
+  poster_path: string;
+  backdrop_path: string;
+  vote_average: number;
+  media_type?: "movie" | "tv";
+  release_date?: string;
+  first_air_date?: string;
+}
+
+export interface Genre {
+  id: number;
+  name: string;
+}
+
+export interface CastMember {
+  id: number;
+  name: string;
+  profile_path: string;
+}
+
+export interface Season {
+  id: number;
+  season_number: number;
+  name: string;
+  overview: string;
+  episode_count: number;
+  poster_path?: string;
+}
+
+export interface MediaDetails extends TMDBMedia {
+  runtime?: number;
+  episode_run_time?: number[];
+  number_of_seasons?: number;
+  seasons?: Season[];
+  overview: string;
+  genres: Genre[];
+  cast: CastMember[];
+}
+
+export interface Episode {
+  id: number;
+  name: string;
+  overview: string;
+  episode_number: number;
+  season_number: number;
+  still_path?: string;
+  air_date?: string;
+  runtime?: number;
+}
+
+export interface SeasonDetails {
+  id: number;
+  season_number: number;
+  name: string;
+  overview: string;
+  episodes: Episode[];
+}
+
+export interface WatchedItem {
+  user_id?: string;
+  media_id: number;
+  media_type: "movie" | "tv";
+  season_number?: number;
+  episode_number?: number;
+  watched_at?: string;
+}
+
+export interface WatchedStatusResponse {
+  watched?: boolean;
+  episodes?: { season: number; episode: number }[];
+}
+
+export interface DiscoverResponse {
+  trending: TMDBMedia[];
+  popular: TMDBMedia[];
+}
+
+const getBackendBaseUrls = (): string[] => {
+  const hostUri =
+    Constants.expoConfig?.hostUri ??
+    Constants.manifest2?.launchAsset?.url ??
+    "";
+  const hostIp = hostUri.split(":")[0];
+  const urls: string[] = [];
+
+  if (hostIp && hostIp !== "localhost" && hostIp !== "127.0.0.1") {
+    urls.push(`http://${hostIp}:8080`);
+  }
+
+  if (Platform.OS === "android") {
+    urls.push("http://localhost:8080");
+    urls.push("http://10.0.2.2:8080");
+  } else {
+    urls.push("http://localhost:8080");
+  }
+
+  return [...new Set(urls)];
+};
+
+export const imageUrl = (path?: string | null, base = IMAGE_BASE_URL) =>
+  path ? `${base}${path}` : "";
+
+export const mediaTitle = (item: TMDBMedia) =>
+  item.title || item.name || "Untitled";
+
+export const mediaDate = (item: TMDBMedia) =>
+  item.release_date || item.first_air_date || "";
+
+export const releaseYear = (item: TMDBMedia) => {
+  const date = mediaDate(item);
+  return date ? new Date(date).getFullYear().toString() : "";
+};
+
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const urls = getBackendBaseUrls();
+  let lastError = "";
+
+  for (const baseUrl of urls) {
+    const url = `${baseUrl}${path}`;
+    try {
+      const response = await fetch(url, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...init?.headers,
+        },
+        signal: init?.signal ?? AbortSignal.timeout(6000),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} from ${url}`);
+      }
+      if (response.status === 204) {
+        return undefined as T;
+      }
+      return (await response.json()) as T;
+    } catch (error: any) {
+      lastError = error.message || String(error);
+      console.warn(`[API] Failed (${url}): ${lastError}`);
+    }
+  }
+
+  throw new Error(
+    `Could not reach the backend. Tried: ${urls.join(", ")}. Last error: ${lastError}`,
+  );
+}
+
+export const fetchDiscover = () => apiFetch<DiscoverResponse>("/api/discover");
+
+export const searchMedia = (query: string, signal?: AbortSignal) =>
+  apiFetch<TMDBMedia[]>(`/api/search?q=${encodeURIComponent(query)}`, {
+    signal,
+  });
+
+export const fetchWatchlist = (options?: {
+  userId?: string;
+  filterWatched?: boolean;
+}) => {
+  const params = new URLSearchParams();
+  params.set("user_id", options?.userId ?? "default");
+  if (options?.filterWatched) {
+    params.set("filter_watched", "true");
+  }
+  return apiFetch<TMDBMedia[]>(`/api/watchlist?${params.toString()}`);
+};
+
+export const addToWatchlist = (item: TMDBMedia) =>
+  apiFetch<TMDBMedia>("/api/watchlist", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+
+export const removeFromWatchlist = (id: number) =>
+  apiFetch<void>(`/api/watchlist/${id}`, { method: "DELETE" });
+
+export const fetchMediaDetails = (type: string, id: string | number) =>
+  apiFetch<MediaDetails>(`/api/media/${type}/${id}`);
+
+export const fetchWatchedStatus = (
+  mediaId: string | number,
+  mediaType: string,
+) =>
+  apiFetch<WatchedStatusResponse>(
+    `/api/watched/status?media_id=${mediaId}&type=${mediaType}`,
+  );
+
+export const markWatched = (payload: Omit<WatchedItem, "watched_at">) =>
+  apiFetch<WatchedItem>("/api/watched", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const markWatchedBulk = (items: Omit<WatchedItem, "watched_at">[]) =>
+  apiFetch<{ added: number }>("/api/watched/bulk", {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
+
+export const unmarkWatched = (payload: Omit<WatchedItem, "watched_at">) =>
+  apiFetch<void>("/api/watched", {
+    method: "DELETE",
+    body: JSON.stringify(payload),
+  });
+
+export const fetchSeasonEpisodes = (
+  seriesId: string | number,
+  season: number,
+) => apiFetch<SeasonDetails>(`/api/media/tv/${seriesId}/season/${season}`);
+
+export const fetchEpisodeDetails = (
+  seriesId: string | number,
+  season: number,
+  episode: number,
+) =>
+  apiFetch<Episode>(
+    `/api/media/tv/${seriesId}/season/${season}/episode/${episode}`,
+  );
