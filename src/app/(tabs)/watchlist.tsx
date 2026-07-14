@@ -478,11 +478,11 @@ function NextEpisodeCard({
         borderColor="$borderColor"
         pressStyle={{ opacity: 0.88 }}
         onPress={handleCardPress}
-        h={136}
+        ai="center"
       >
         <YStack
-          w={110}
-          h="100%"
+          w={96}
+          h={64}
           borderRadius="$3"
           overflow="hidden"
           bg="$background"
@@ -495,37 +495,37 @@ function NextEpisodeCard({
             />
           ) : (
             <YStack f={1} ai="center" jc="center">
-              <Text color="$color" opacity={0.45}>
+              <Text color="$color" opacity={0.45} fos="$1">
                 No art
               </Text>
             </YStack>
           )}
         </YStack>
 
-        <YStack f={1} jc="space-between" py="$1">
-          <YStack gap="$1">
-            <Text
-              color="$color"
-              fow="900"
-              fos="$4"
-              pressStyle={{ opacity: 0.7 }}
-              onPress={handleShowPress}
-              numberOfLines={1}
-            >
-              {mediaTitle(show)}
-            </Text>
-            <Text color="$color" opacity={0.8} fow="700" fos="$3" numberOfLines={1}>
-              S{seasonStr} E{episodeStr} • {episode.name}
-            </Text>
-            {episode.air_date && (
+        <YStack f={1} jc="center" gap="$1" py="$1">
+          <Text
+            color="$color"
+            fow="900"
+            fos="$3"
+            pressStyle={{ opacity: 0.7 }}
+            onPress={handleShowPress}
+            numberOfLines={1}
+          >
+            {mediaTitle(show)}
+          </Text>
+          <Text color="$color" opacity={0.8} fow="700" fos="$2" numberOfLines={1}>
+            S{seasonStr} E{episodeStr} • {episode.name}
+          </Text>
+          <XStack mt="$1" ai="center" jc="space-between" flexWrap="wrap" gap="$2">
+            {episode.air_date ? (
               <Text color="$color" opacity={0.45} fos="$1" numberOfLines={1}>
-                Air Date: {episode.air_date}
+                {episode.air_date}
               </Text>
+            ) : (
+              <YStack />
             )}
-          </YStack>
-          <XStack ai="center" jc="flex-end">
             <Button
-              size="$2.5"
+              size="$2"
               theme="purple"
               borderRadius="$3"
               disabled={marking}
