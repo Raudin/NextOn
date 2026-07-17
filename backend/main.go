@@ -12,8 +12,45 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+// GORM Models
+type User struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
+	PasswordHash string    `gorm:"not null" json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type WatchlistItem struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	UserID       uint      `gorm:"not null;uniqueIndex:idx_user_watchlist" json:"user_id"`
+	MediaID      int64     `gorm:"not null;uniqueIndex:idx_user_watchlist" json:"media_id"`
+	Title        string    `json:"title,omitempty"`
+	Name         string    `json:"name,omitempty"`
+	PosterPath   string    `json:"poster_path"`
+	BackdropPath string    `json:"backdrop_path"`
+	VoteAverage  float64   `json:"vote_average"`
+	MediaType    string    `json:"media_type,omitempty"`
+	ReleaseDate  string    `json:"release_date,omitempty"`
+	FirstAirDate string    `json:"first_air_date,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type WatchedItem struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	UserID        uint      `gorm:"not null;uniqueIndex:idx_user_watched" json:"user_id"`
+	MediaID       int64     `gorm:"not null;uniqueIndex:idx_user_watched" json:"media_id"`
+	MediaType     string    `gorm:"not null" json:"media_type"`
+	SeasonNumber  *int64    `gorm:"uniqueIndex:idx_user_watched" json:"season_number,omitempty"`
+	EpisodeNumber *int64    `gorm:"uniqueIndex:idx_user_watched" json:"episode_number,omitempty"`
+	WatchedAt     time.Time `json:"watched_at"`
+}
 
 // TMDBMedia represents a movie or TV show item from TMDB
 type TMDBMedia struct {
@@ -67,15 +104,6 @@ type SeasonDetails struct {
 	Episodes     []Episode `json:"episodes"`
 }
 
-type WatchedItem struct {
-	UserID        string    `json:"user_id"`
-	MediaID       int64     `json:"media_id"`
-	MediaType     string    `json:"media_type"`
-	SeasonNumber  *int64    `json:"season_number,omitempty"`
-	EpisodeNumber *int64    `json:"episode_number,omitempty"`
-	WatchedAt     time.Time `json:"watched_at"`
-}
-
 type MediaDetails struct {
 	TMDBMedia
 	Runtime         int64        `json:"runtime,omitempty"`
@@ -118,22 +146,82 @@ type Cache struct {
 
 var (
 	discoverCache *Cache
+	db            *gorm.DB
+	jwtSecret     = []byte("nexton-secret-key-1234567890")
 )
-
-var watchlistStore = struct {
-	sync.RWMutex
-	items map[int64]TMDBMedia
-}{items: make(map[int64]TMDBMedia)}
-
-var watchedStore = struct {
-	sync.RWMutex
-	items map[string][]WatchedItem
-}{items: make(map[string][]WatchedItem)}
 
 func init() {
 	// Initialize cache with a 10-minute expiration rule
 	discoverCache = &Cache{
 		duration: 10 * time.Minute,
+	}
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		jwtSecret = []byte(secret)
+	}
+}
+
+func initDB() {
+	var err error
+	db, err = gorm.Open(sqlite.Open("nexton.db"), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect database: %v", err)
+	}
+
+	// Auto Migrate
+	err = db.AutoMigrate(&User{}, &WatchlistItem{}, &WatchedItem{})
+	if err != nil {
+		log.Fatalf("Failed to auto migrate database: %v", err)
+	}
+	log.Println("SQLite Database migrated successfully.")
+}
+
+// AuthMiddleware validates JWT bearer token and injects user_id into context
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+			c.Abort()
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if !(len(parts) == 2 && parts[0] == "Bearer") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must be Bearer token"})
+			c.Abort()
+			return
+		}
+
+		tokenString := parts[1]
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
+
+		userIDFloat, ok := claims["user_id"].(float64)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID in token"})
+			c.Abort()
+			return
+		}
+
+		c.Set("user_id", uint(userIDFloat))
+		c.Next()
 	}
 }
 
@@ -147,6 +235,9 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// Initialize SQLite DB with GORM
+	initDB()
 
 	// Configure Gin
 	r := gin.Default()
@@ -166,21 +257,31 @@ func main() {
 		c.Next()
 	})
 
-	// Discover Endpoint
+	// Auth Endpoints
+	r.POST("/api/auth/signup", handleSignup)
+	r.POST("/api/auth/login", handleLogin)
+
+	// Discover & Search (Publicly browsable)
 	r.GET("/api/discover", handleDiscover)
 	r.GET("/api/search", handleSearch)
-	r.POST("/api/watchlist", handleAddWatchlist)
-	r.GET("/api/watchlist", handleGetWatchlist)
-	r.DELETE("/api/watchlist/:id", handleDeleteWatchlist)
 
+	// Watchlist (Private, authenticated)
+	r.POST("/api/watchlist", AuthMiddleware(), handleAddWatchlist)
+	r.GET("/api/watchlist", AuthMiddleware(), handleGetWatchlist)
+	r.DELETE("/api/watchlist/:id", AuthMiddleware(), handleDeleteWatchlist)
+
+	// Media Details (Publicly browsable)
 	r.GET("/api/media/movie/:id", handleMovieDetails)
 	r.GET("/api/media/tv/:id", handleTvDetails)
 	r.GET("/api/media/tv/:id/season/:season", handleSeasonDetails)
 	r.GET("/api/media/tv/:id/season/:season/episode/:episode", handleEpisodeDetails)
 
-	r.POST("/api/watched", handleAddWatched)
-	r.POST("/api/watched/bulk", handleAddWatchedBulk)
-	r.DELETE("/api/watched", handleDeleteWatched)
+	// Watched (Private, authenticated)
+	r.POST("/api/watched", AuthMiddleware(), handleAddWatched)
+	r.POST("/api/watched/bulk", AuthMiddleware(), handleAddWatchedBulk)
+	r.DELETE("/api/watched", AuthMiddleware(), handleDeleteWatched)
+
+	// Watched Status (Publicly queryable, checks auth optionally to avoid failing)
 	r.GET("/api/watched/status", handleWatchedStatus)
 
 	if os.Getenv("TMDB_API_KEY") == "" {
@@ -193,6 +294,113 @@ func main() {
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to run server: %v", err)
 	}
+}
+
+type SignupReq struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+type LoginReq struct {
+	Email    string `json:"email" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+func handleSignup(c *gin.Context) {
+	var req SignupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email format or password length (min 6 characters required)"})
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Check if user exists
+	var existing User
+	if err := db.Where("email = ?", email).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "A user with this email already exists"})
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt password"})
+		return
+	}
+
+	user := User{
+		Email:        email,
+		PasswordHash: string(hashedPassword),
+		CreatedAt:    time.Now(),
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		return
+	}
+
+	// Generate JWT Token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign session token"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"token": tokenString,
+		"user": gin.H{
+			"id":    user.ID,
+			"email": user.Email,
+		},
+	})
+}
+
+func handleLogin(c *gin.Context) {
+	var req LoginReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email and password are required"})
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	var user User
+	if err := db.Where("email = ?", email).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
+
+	// Generate JWT Token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign session token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": tokenString,
+		"user": gin.H{
+			"id":    user.ID,
+			"email": user.Email,
+		},
+	})
 }
 
 func handleSearch(c *gin.Context) {
@@ -227,6 +435,13 @@ func handleSearch(c *gin.Context) {
 }
 
 func handleAddWatchlist(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	var item TMDBMedia
 	if err := c.ShouldBindJSON(&item); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid media payload"})
@@ -237,28 +452,69 @@ func handleAddWatchlist(c *gin.Context) {
 		return
 	}
 
-	watchlistStore.Lock()
-	watchlistStore.items[item.ID] = item
-	watchlistStore.Unlock()
+	var existing WatchlistItem
+	if err := db.Where("user_id = ? AND media_id = ?", userUID, item.ID).First(&existing).Error; err == nil {
+		c.JSON(http.StatusOK, existing)
+		return
+	}
+
+	watchItem := WatchlistItem{
+		UserID:       userUID,
+		MediaID:      item.ID,
+		Title:        item.Title,
+		Name:         item.Name,
+		PosterPath:   item.PosterPath,
+		BackdropPath: item.BackdropPath,
+		VoteAverage:  item.VoteAverage,
+		MediaType:    item.MediaType,
+		ReleaseDate:  item.ReleaseDate,
+		FirstAirDate: item.FirstAirDate,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := db.Create(&watchItem).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add to watchlist"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, item)
 }
 
 func handleGetWatchlist(c *gin.Context) {
-	userID := c.DefaultQuery("user_id", "default")
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	filterWatched := c.Query("filter_watched") == "true"
 
-	watchlistStore.RLock()
-	items := make([]TMDBMedia, 0, len(watchlistStore.items))
-	for _, item := range watchlistStore.items {
-		items = append(items, item)
+	var dbItems []WatchlistItem
+	if err := db.Where("user_id = ?", userUID).Find(&dbItems).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch watchlist"})
+		return
 	}
-	watchlistStore.RUnlock()
+
+	items := make([]TMDBMedia, 0, len(dbItems))
+	for _, dbItem := range dbItems {
+		items = append(items, TMDBMedia{
+			ID:           dbItem.MediaID,
+			Title:        dbItem.Title,
+			Name:         dbItem.Name,
+			PosterPath:   dbItem.PosterPath,
+			BackdropPath: dbItem.BackdropPath,
+			VoteAverage:  dbItem.VoteAverage,
+			MediaType:    dbItem.MediaType,
+			ReleaseDate:  dbItem.ReleaseDate,
+			FirstAirDate: dbItem.FirstAirDate,
+		})
+	}
 
 	if filterWatched {
 		filtered := make([]TMDBMedia, 0, len(items))
 		for _, item := range items {
-			if isWatchlistItemFullyWatched(userID, item) {
+			if isWatchlistItemFullyWatched(userUID, item) {
 				continue
 			}
 			filtered = append(filtered, item)
@@ -274,15 +530,23 @@ func handleGetWatchlist(c *gin.Context) {
 }
 
 func handleDeleteWatchlist(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	id, err := parseID(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid media id"})
 		return
 	}
 
-	watchlistStore.Lock()
-	delete(watchlistStore.items, id)
-	watchlistStore.Unlock()
+	if err := db.Where("user_id = ? AND media_id = ?", userUID, id).Delete(&WatchlistItem{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete from watchlist"})
+		return
+	}
 
 	c.Status(http.StatusNoContent)
 }
@@ -430,6 +694,13 @@ func handleEpisodeDetails(c *gin.Context) {
 }
 
 func handleAddWatched(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	var req WatchedItem
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watched payload"})
@@ -448,31 +719,29 @@ func handleAddWatched(c *gin.Context) {
 		return
 	}
 
-	userID := req.UserID
-	if userID == "" {
-		userID = "default"
-	}
-	req.UserID = userID
+	req.UserID = userUID
 	req.WatchedAt = time.Now()
 
-	addOrUpdateWatched(userID, req)
+	addOrUpdateWatched(userUID, req)
 	c.JSON(http.StatusCreated, req)
 }
 
 func handleAddWatchedBulk(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	var req struct {
-		UserID string        `json:"user_id"`
-		Items  []WatchedItem `json:"items"`
+		Items []WatchedItem `json:"items"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bulk payload"})
 		return
 	}
 
-	userID := req.UserID
-	if userID == "" {
-		userID = "default"
-	}
 	now := time.Now()
 	for i := range req.Items {
 		item := &req.Items[i]
@@ -488,15 +757,22 @@ func handleAddWatchedBulk(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Season and episode numbers are required for TV episodes"})
 			return
 		}
-		item.UserID = userID
+		item.UserID = userUID
 		item.WatchedAt = now
-		addOrUpdateWatched(userID, *item) 
+		addOrUpdateWatched(userUID, *item)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"added": len(req.Items)})
 }
 
 func handleDeleteWatched(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
 	var req WatchedItem
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watched payload"})
@@ -511,12 +787,25 @@ func handleDeleteWatched(c *gin.Context) {
 		return
 	}
 
-	userID := req.UserID
-	if userID == "" {
-		userID = "default"
+	query := db.Where("user_id = ? AND media_id = ? AND media_type = ?", userUID, req.MediaID, req.MediaType)
+	if req.MediaType == "tv" {
+		if req.SeasonNumber != nil {
+			query = query.Where("season_number = ?", *req.SeasonNumber)
+		} else {
+			query = query.Where("season_number IS NULL")
+		}
+		if req.EpisodeNumber != nil {
+			query = query.Where("episode_number = ?", *req.EpisodeNumber)
+		} else {
+			query = query.Where("episode_number IS NULL")
+		}
 	}
 
-	removeWatched(userID, req)
+	if err := query.Delete(&WatchedItem{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove from watched list"})
+		return
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -531,9 +820,41 @@ func handleWatchedStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Media type must be movie or tv"})
 		return
 	}
-	userID := c.DefaultQuery("user_id", "default")
 
-	items := getUserWatched(userID)
+	// Optional authentication check
+	var userUID uint
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString := parts[1]
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return jwtSecret, nil
+			})
+			if err == nil && token.Valid {
+				if claims, ok := token.Claims.(jwt.MapClaims); ok {
+					if idFloat, ok := claims["user_id"].(float64); ok {
+						userUID = uint(idFloat)
+					}
+				}
+			}
+		}
+	}
+
+	if userUID == 0 {
+		// User is not logged in: return empty watched state
+		if mediaType == "movie" {
+			c.JSON(http.StatusOK, gin.H{"watched": false})
+		} else {
+			c.JSON(http.StatusOK, gin.H{"episodes": []gin.H{}})
+		}
+		return
+	}
+
+	items := getUserWatched(userUID)
 	if mediaType == "movie" {
 		watched := false
 		for _, item := range items {
@@ -559,7 +880,7 @@ type tmdbTVSummary struct {
 	NumberOfEpisodes int64 `json:"number_of_episodes"`
 }
 
-func isWatchlistItemFullyWatched(userID string, item TMDBMedia) bool {
+func isWatchlistItemFullyWatched(userID uint, item TMDBMedia) bool {
 	mediaType := item.MediaType
 	if mediaType == "" {
 		if item.Title != "" {
@@ -758,50 +1079,32 @@ func topCast(cast []CastMember, limit int) []CastMember {
 	return safe
 }
 
-func addOrUpdateWatched(userID string, item WatchedItem) {
-	watchedStore.Lock()
-	defer watchedStore.Unlock()
-
-	list := watchedStore.items[userID]
-	for i, existing := range list {
-		if existing.MediaID == item.MediaID && existing.MediaType == item.MediaType &&
-			ptrInt64Equal(existing.SeasonNumber, item.SeasonNumber) &&
-			ptrInt64Equal(existing.EpisodeNumber, item.EpisodeNumber) {
-			list[i].WatchedAt = item.WatchedAt
-			watchedStore.items[userID] = list
-			return
-		}
+func addOrUpdateWatched(userID uint, item WatchedItem) {
+	query := db.Where("user_id = ? AND media_id = ? AND media_type = ?", userID, item.MediaID, item.MediaType)
+	if item.SeasonNumber == nil {
+		query = query.Where("season_number IS NULL")
+	} else {
+		query = query.Where("season_number = ?", *item.SeasonNumber)
 	}
-	watchedStore.items[userID] = append(list, item)
+	if item.EpisodeNumber == nil {
+		query = query.Where("episode_number IS NULL")
+	} else {
+		query = query.Where("episode_number = ?", *item.EpisodeNumber)
+	}
+
+	var existing WatchedItem
+	if err := query.First(&existing).Error; err == nil {
+		existing.WatchedAt = item.WatchedAt
+		db.Save(&existing)
+	} else {
+		db.Create(&item)
+	}
 }
 
-func removeWatched(userID string, req WatchedItem) {
-	watchedStore.Lock()
-	defer watchedStore.Unlock()
-
-	list := watchedStore.items[userID]
-	filtered := make([]WatchedItem, 0, len(list))
-	for _, item := range list {
-		if item.MediaID == req.MediaID && item.MediaType == req.MediaType {
-			if req.MediaType == "movie" {
-				continue
-			}
-			if req.SeasonNumber == nil || req.EpisodeNumber == nil {
-				continue
-			}
-			if ptrInt64Equal(item.SeasonNumber, req.SeasonNumber) && ptrInt64Equal(item.EpisodeNumber, req.EpisodeNumber) {
-				continue
-			}
-		}
-		filtered = append(filtered, item)
-	}
-	watchedStore.items[userID] = filtered
-}
-
-func getUserWatched(userID string) []WatchedItem {
-	watchedStore.RLock()
-	defer watchedStore.RUnlock()
-	return append([]WatchedItem(nil), watchedStore.items[userID]...)
+func getUserWatched(userID uint) []WatchedItem {
+	var items []WatchedItem
+	db.Where("user_id = ?", userID).Find(&items)
+	return items
 }
 
 func ptrInt64Equal(a, b *int64) bool {

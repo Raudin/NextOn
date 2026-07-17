@@ -85,6 +85,22 @@ export interface DiscoverResponse {
   popular: TMDBMedia[];
 }
 
+export interface User {
+  id: number;
+  email: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
+}
+
+let authToken: string | null = null;
+
+export function setApiToken(token: string | null) {
+  authToken = token;
+}
+
 const getBackendBaseUrls = (): string[] => {
   const hostUri =
     Constants.expoConfig?.hostUri ??
@@ -131,16 +147,43 @@ export async function apiFetch<T>(
   for (const baseUrl of urls) {
     const url = `${baseUrl}${path}`;
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (init?.headers) {
+        if (init.headers instanceof Headers) {
+          init.headers.forEach((value, key) => {
+            headers[key] = value;
+          });
+        } else if (Array.isArray(init.headers)) {
+          init.headers.forEach(([key, value]) => {
+            headers[key] = value;
+          });
+        } else {
+          Object.assign(headers, init.headers);
+        }
+      }
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch(url, {
         ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...init?.headers,
-        },
+        headers,
         signal: init?.signal ?? AbortSignal.timeout(6000),
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} from ${url}`);
+        // Parse error payload from backend if available
+        let errorMsg = `HTTP ${response.status} from ${url}`;
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errorMsg = errData.error;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(errorMsg);
       }
       if (response.status === 204) {
         return undefined as T;
@@ -153,7 +196,7 @@ export async function apiFetch<T>(
   }
 
   throw new Error(
-    `Could not reach the backend. Tried: ${urls.join(", ")}. Last error: ${lastError}`,
+    lastError || `Could not reach the backend. Tried: ${urls.join(", ")}`
   );
 }
 
@@ -164,12 +207,23 @@ export const searchMedia = (query: string, signal?: AbortSignal) =>
     signal,
   });
 
+export const loginUser = (payload: any) =>
+  apiFetch<AuthResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const signupUser = (payload: any) =>
+  apiFetch<AuthResponse>("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 export const fetchWatchlist = (options?: {
   userId?: string;
   filterWatched?: boolean;
 }) => {
   const params = new URLSearchParams();
-  params.set("user_id", options?.userId ?? "default");
   if (options?.filterWatched) {
     params.set("filter_watched", "true");
   }

@@ -11,6 +11,7 @@ import {
   XStack,
   YStack,
 } from "tamagui";
+import { useAuth } from "@/context/AuthContext";
 
 import {
   addToWatchlist,
@@ -27,6 +28,7 @@ import {
 
 export default function DiscoverScreen() {
   const router = useRouter();
+  const { token } = useAuth();
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -41,12 +43,18 @@ export default function DiscoverScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [discover, watchlist] = await Promise.all([
-        fetchDiscover(),
-        fetchWatchlist(),
-      ]);
-      setData(discover);
-      setWatchlistIds(new Set(watchlist.map((item) => item.id)));
+      if (token) {
+        const [discover, watchlist] = await Promise.all([
+          fetchDiscover(),
+          fetchWatchlist(),
+        ]);
+        setData(discover);
+        setWatchlistIds(new Set(watchlist.map((item) => item.id)));
+      } else {
+        const discover = await fetchDiscover();
+        setData(discover);
+        setWatchlistIds(new Set());
+      }
     } catch (err: any) {
       setError(
         `${err.message || String(err)}. Make sure the Go server is running on port 8080.`,
@@ -58,7 +66,7 @@ export default function DiscoverScreen() {
 
   useEffect(() => {
     loadDiscover();
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -90,6 +98,10 @@ export default function DiscoverScreen() {
   }, [searchQuery]);
 
   const toggleWatchlist = async (item: TMDBMedia) => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
     const exists = watchlistIds.has(item.id);
     setWatchlistIds((current) => {
       const next = new Set(current);
