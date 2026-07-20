@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect } from "react";
 import { Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { useAuth } from "@/context/AuthContext";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
@@ -25,12 +26,20 @@ type Tab = "movies" | "tv";
 
 export default function WatchlistScreen() {
   const router = useRouter();
+  const { token, isLoading: authLoading } = useAuth();
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("movies");
 
+  useEffect(() => {
+    if (!authLoading && !token) {
+      router.replace("/auth");
+    }
+  }, [authLoading, token]);
+
   const loadWatchlist = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
     setError(null);
     try {
@@ -40,13 +49,27 @@ export default function WatchlistScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useFocusEffect(
     useCallback(() => {
-      loadWatchlist();
-    }, [loadWatchlist]),
+      if (token) {
+        loadWatchlist();
+      }
+    }, [loadWatchlist, token]),
   );
+
+  if (authLoading) {
+    return (
+      <YStack f={1} ai="center" jc="center" bg="$background">
+        <Spinner size="large" color="$color" />
+      </YStack>
+    );
+  }
+
+  if (!token) {
+    return null;
+  }
 
   const removeItem = async (id: number) => {
     const previous = items;

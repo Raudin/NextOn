@@ -1,7 +1,11 @@
 import * as Device from 'expo-device';
+import { useEffect } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Spinner, YStack } from 'tamagui';
 
+import { useAuth } from '@/context/AuthContext';
 import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
@@ -29,6 +33,27 @@ function getDevMenuHint() {
 }
 
 export default function HomeScreen() {
+  const { token, isLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && !token) {
+      router.replace('/auth');
+    }
+  }, [isLoading, token]);
+
+  if (isLoading) {
+    return (
+      <YStack f={1} ai='center' jc='center' bg='$background'>
+        <Spinner size='large' color='$color' />
+      </YStack>
+    );
+  }
+
+  if (!token) {
+    return null;
+  }
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>

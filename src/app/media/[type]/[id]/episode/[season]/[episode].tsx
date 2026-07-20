@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, YStack } from "tamagui";
+import { useAuth } from "@/context/AuthContext";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
@@ -16,6 +17,7 @@ import {
 
 export default function EpisodeDetailScreen() {
   const router = useRouter();
+  const { token } = useAuth();
   const params = useLocalSearchParams<{
     type: string;
     id: string;
@@ -37,22 +39,34 @@ export default function EpisodeDetailScreen() {
       setLoading(true);
       setError(null);
       try {
-        const [data, status] = await Promise.all([
-          fetchEpisodeDetails(
+        if (token) {
+          const [data, status] = await Promise.all([
+            fetchEpisodeDetails(
+              params.id,
+              Number(params.season),
+              Number(params.episode),
+            ),
+            fetchWatchedStatus(params.id, "tv"),
+          ]);
+          if (mounted) {
+            setEpisode(data);
+            const key = `${params.season}:${params.episode}`;
+            setWatched(
+              status.episodes?.some(
+                (ep) => `${ep.season}:${ep.episode}` === key,
+              ) ?? false,
+            );
+          }
+        } else {
+          const data = await fetchEpisodeDetails(
             params.id,
             Number(params.season),
             Number(params.episode),
-          ),
-          fetchWatchedStatus(params.id, "tv"),
-        ]);
-        if (mounted) {
-          setEpisode(data);
-          const key = `${params.season}:${params.episode}`;
-          setWatched(
-            status.episodes?.some(
-              (ep) => `${ep.season}:${ep.episode}` === key,
-            ) ?? false,
           );
+          if (mounted) {
+            setEpisode(data);
+            setWatched(false);
+          }
         }
       } catch (err: any) {
         if (mounted) {
@@ -68,9 +82,13 @@ export default function EpisodeDetailScreen() {
     return () => {
       mounted = false;
     };
-  }, [params.id, params.season, params.episode]);
+  }, [params.id, params.season, params.episode, token]);
 
   const toggleWatched = async () => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
     if (!episode || toggling) {
       return;
     }

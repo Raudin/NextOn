@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { useAuth } from "@/context/AuthContext";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
@@ -27,6 +28,7 @@ import {
 
 export default function MediaDetailScreen() {
   const router = useRouter();
+  const { token } = useAuth();
   const params = useLocalSearchParams<{ type: string; id: string }>();
   const [details, setDetails] = useState<MediaDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,34 +76,46 @@ export default function MediaDetailScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [detailsData, watchlist, watchedStatus] = await Promise.all([
-        fetchMediaDetails(params.type, params.id),
-        fetchWatchlist(),
-        fetchWatchedStatus(params.id, params.type),
-      ]);
-      setDetails(detailsData);
-      setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
-      if (isMovie) {
-        setWatched(watchedStatus.watched ?? false);
-      } else if (watchedStatus.episodes) {
-        const next = new Set<string>();
-        for (const ep of watchedStatus.episodes) {
-          next.add(`${ep.season}:${ep.episode}`);
+      if (token) {
+        const [detailsData, watchlist, watchedStatus] = await Promise.all([
+          fetchMediaDetails(params.type, params.id),
+          fetchWatchlist(),
+          fetchWatchedStatus(params.id, params.type),
+        ]);
+        setDetails(detailsData);
+        setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
+        if (isMovie) {
+          setWatched(watchedStatus.watched ?? false);
+        } else if (watchedStatus.episodes) {
+          const next = new Set<string>();
+          for (const ep of watchedStatus.episodes) {
+            next.add(`${ep.season}:${ep.episode}`);
+          }
+          setWatchedEpisodes(next);
         }
-        setWatchedEpisodes(next);
+      } else {
+        const detailsData = await fetchMediaDetails(params.type, params.id);
+        setDetails(detailsData);
+        setInWatchlist(false);
+        setWatched(false);
+        setWatchedEpisodes(new Set());
       }
     } catch (err: any) {
       setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
-  }, [params.type, params.id, isMovie]);
+  }, [params.type, params.id, isMovie, token]);
 
   useEffect(() => {
     loadAll();
-  }, [loadAll]);
+  }, [loadAll, token]);
 
   const toggleWatchlist = async () => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
     if (!details || watchlistLoading) {
       return;
     }
@@ -123,6 +137,10 @@ export default function MediaDetailScreen() {
   };
 
   const toggleWatched = async () => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
     if (!details || !isMovie || watchedLoading) {
       return;
     }
@@ -181,6 +199,10 @@ export default function MediaDetailScreen() {
     episode: Episode,
     seasonEpisodesList: Episode[],
   ) => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
     if (!details) {
       return;
     }
