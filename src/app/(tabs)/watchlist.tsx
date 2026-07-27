@@ -59,6 +59,10 @@ export default function WatchlistScreen() {
     }, [loadWatchlist, token]),
   );
 
+  const handleFullyWatched = useCallback((id: number) => {
+    setItems((current) => current.filter((item) => item.id !== id));
+  }, []);
+
   if (authLoading) {
     return (
       <YStack f={1} ai="center" jc="center" bg="$background">
@@ -94,10 +98,6 @@ export default function WatchlistScreen() {
     (item) => (item.media_type || "movie") === "movie",
   );
   const shows = items.filter((item) => item.media_type === "tv");
-
-  const handleFullyWatched = useCallback((id: number) => {
-    setItems((current) => current.filter((item) => item.id !== id));
-  }, []);
 
   return (
     <YStack f={1} bg="$background">
