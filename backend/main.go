@@ -280,6 +280,7 @@ func main() {
 	r.POST("/api/watched", AuthMiddleware(), handleAddWatched)
 	r.POST("/api/watched/bulk", AuthMiddleware(), handleAddWatchedBulk)
 	r.DELETE("/api/watched", AuthMiddleware(), handleDeleteWatched)
+	r.GET("/api/watched", AuthMiddleware(), handleGetWatched)
 
 	// Watched Status (Publicly queryable, checks auth optionally to avoid failing)
 	r.GET("/api/watched/status", handleWatchedStatus)
@@ -807,6 +808,18 @@ func handleDeleteWatched(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func handleGetWatched(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
+	items := getUserWatched(userUID)
+	c.JSON(http.StatusOK, items)
 }
 
 func handleWatchedStatus(c *gin.Context) {

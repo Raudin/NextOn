@@ -250,6 +250,9 @@ export const fetchWatchedStatus = (
     `/api/watched/status?media_id=${mediaId}&type=${mediaType}`,
   );
 
+export const fetchWatchedHistory = () =>
+  apiFetch<WatchedItem[]>("/api/watched");
+
 export const markWatched = (payload: Omit<WatchedItem, "watched_at">) =>
   apiFetch<WatchedItem>("/api/watched", {
     method: "POST",
