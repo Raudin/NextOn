@@ -1,13 +1,14 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Linking, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
+  IMAGE_BASE_URL,
   PROFILE_IMAGE_BASE_URL,
   addToWatchlist,
   fetchMediaDetails,
@@ -67,6 +68,24 @@ export default function MediaDetailScreen() {
       return `${details.episode_run_time[0]}m episodes`;
     }
     return "";
+  }, [details]);
+
+  const trailer = useMemo(() => {
+    if (!details?.trailers) return null;
+    return (
+      details.trailers.find(
+        (v) => v.site === "YouTube" && v.type === "Trailer",
+      ) ||
+      details.trailers.find(
+        (v) => v.site === "YouTube" && v.type === "Teaser",
+      ) ||
+      null
+    );
+  }, [details]);
+
+  const logo = useMemo(() => {
+    if (!details?.logos || details.logos.length === 0) return null;
+    return details.logos[0];
   }, [details]);
 
   const loadAll = useCallback(async () => {
@@ -159,6 +178,12 @@ export default function MediaDetailScreen() {
     } finally {
       setWatchedLoading(false);
     }
+  };
+
+  const openTrailer = () => {
+    if (!trailer) return;
+    const url = `https://www.youtube.com/watch?v=${trailer.key}`;
+    Linking.openURL(url);
   };
 
   const toggleSeason = async (season: Season) => {
@@ -315,6 +340,18 @@ export default function MediaDetailScreen() {
     } as any);
   };
 
+  // Status badge color
+  const statusColor = useMemo(() => {
+    if (!details?.status) return "rgba(255,255,255,0.15)";
+    const s = details.status.toLowerCase();
+    if (s === "ended" || s === "canceled") return "rgba(255, 80, 80, 0.25)";
+    if (s === "returning series" || s === "in production")
+      return "rgba(80, 200, 120, 0.25)";
+    if (s.includes("coming soon") || s.includes("planned"))
+      return "rgba(255, 200, 50, 0.25)";
+    return "rgba(255,255,255,0.15)";
+  }, [details]);
+
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -337,7 +374,8 @@ export default function MediaDetailScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
           >
-            <YStack h={360} bg="$backgroundElement">
+            {/* Hero Backdrop */}
+            <YStack h={420} bg="$backgroundElement">
               {details.backdrop_path ? (
                 <Image
                   source={{
@@ -357,6 +395,10 @@ export default function MediaDetailScreen() {
                 </YStack>
               )}
 
+              {/* Gradient overlay */}
+              <YStack style={styles.gradientOverlay} />
+
+              {/* Header row: Back + Title */}
               <YStack
                 pos="absolute"
                 t={0}
@@ -365,81 +407,148 @@ export default function MediaDetailScreen() {
                 b={0}
                 jc="space-between"
                 p="$4"
-                bg="rgba(0,0,0,0.24)"
               >
-                <Button
-                  size="$3"
-                  circular
-                  alignSelf="flex-start"
-                  bg="rgba(0,0,0,0.55)"
-                  color="white"
+                {/* Back button */}
+                <TouchableOpacity
                   onPress={() => router.back()}
+                  style={styles.backButton}
                 >
-                  Back
-                </Button>
+                  <Text color="white" fow="700" fos="$5">
+                    ‹
+                  </Text>
+                </TouchableOpacity>
 
+                {/* Bottom of hero: Status + Logo/Title + Meta + Genres */}
                 <YStack gap="$3">
-                  <YStack gap="$1">
-                    <Text color="white" fow="900" fos="$9" numberOfLines={3}>
+                  {/* Status badge */}
+                  {details.status ? (
+                    <XStack>
+                      <XStack
+                        px="$3"
+                        py="$1"
+                        borderRadius="$10"
+                        bg={statusColor}
+                        borderWidth={1}
+                        borderColor="rgba(255,255,255,0.2)"
+                      >
+                        <Text color="white" fow="600" fos="$2">
+                          {details.status}
+                        </Text>
+                      </XStack>
+                    </XStack>
+                  ) : null}
+
+                  {/* Logo or Title */}
+                  {logo ? (
+                    <Image
+                      source={{
+                        uri: imageUrl(logo.file_path, IMAGE_BASE_URL),
+                      }}
+                      style={styles.logoImage}
+                      contentFit="contain"
+                    />
+                  ) : (
+                    <Text
+                      color="white"
+                      fow="900"
+                      fos="$9"
+                      numberOfLines={3}
+                      style={styles.titleText}
+                    >
                       {mediaTitle(details)}
                     </Text>
-                    <Text color="white" opacity={0.82} fow="700">
-                      {[mediaDate(details), runtime].filter(Boolean).join("  ")}
-                    </Text>
-                  </YStack>
+                  )}
 
-                  <XStack gap="$2" flexWrap="wrap">
-                    {(details.genres ?? []).map((genre) => (
-                      <XStack
-                        key={genre.id}
-                        px="$2.5"
-                        py="$1"
-                        borderRadius="$5"
-                        bg="rgba(255,255,255,0.2)"
-                        borderWidth={1}
-                        borderColor="rgba(255,255,255,0.24)"
-                      >
-                        <Text color="white" fow="700" fos="$1">
+                  {/* Genre bullets + runtime/date */}
+                  <XStack ai="center" gap="$2" flexWrap="wrap">
+                    {(details.genres ?? []).map((genre, i) => (
+                      <XStack key={genre.id} ai="center" gap="$2">
+                        {i > 0 && (
+                          <YStack
+                            w={3}
+                            h={3}
+                            borderRadius={999}
+                            bg="rgba(255,255,255,0.5)"
+                          />
+                        )}
+                        <Text color="white" opacity={0.85} fow="500" fos="$3">
                           {genre.name}
                         </Text>
                       </XStack>
                     ))}
+                    {runtime ? (
+                      <XStack ai="center" gap="$2">
+                        {(details.genres ?? []).length > 0 && (
+                          <YStack
+                            w={3}
+                            h={3}
+                            borderRadius={999}
+                            bg="rgba(255,255,255,0.5)"
+                          />
+                        )}
+                        <Text color="white" opacity={0.7} fow="500" fos="$3">
+                          {runtime}
+                        </Text>
+                      </XStack>
+                    ) : null}
                   </XStack>
                 </YStack>
               </YStack>
             </YStack>
 
+            {/* Action Buttons */}
             <XStack mt="$4" px="$4" gap="$3">
+              {/* Watchlist button */}
               <Button
                 f={1}
                 size="$4"
                 borderRadius="$4"
-                bg={inWatchlist ? "$purple9" : "transparent"}
-                color={inWatchlist ? "white" : "$purple9"}
+                bg={inWatchlist ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.1)"}
+                color="white"
                 borderWidth={1}
-                borderColor="$purple9"
+                borderColor={inWatchlist ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.2)"}
                 disabled={watchlistLoading}
                 onPress={toggleWatchlist}
+                iconAfter={watchlistLoading ? <Spinner size="small" color="white" /> : undefined}
               >
-                {inWatchlist ? "In Watchlist" : "Watchlist"}
+                {inWatchlist ? "✓  In Watchlist" : "+  Watchlist"}
               </Button>
-              {isMovie && (
+
+              {/* Trailer button */}
+              {trailer ? (
                 <Button
-                  f={1}
                   size="$4"
                   borderRadius="$4"
-                  bg={watched ? "$green9" : "transparent"}
-                  color={watched ? "white" : "$green9"}
+                  bg="white"
+                  color="black"
+                  fontWeight="700"
+                  onPress={openTrailer}
+                  px="$4"
+                >
+                  ▶  Trailer
+                </Button>
+              ) : null}
+
+              {/* Mark Watched (movie only) */}
+              {isMovie && (
+                <Button
+                  size="$4"
+                  borderRadius={999}
+                  w={48}
+                  h={48}
+                  bg={watched ? "$red9" : "rgba(255,255,255,0.1)"}
                   borderWidth={1}
-                  borderColor="$green9"
+                  borderColor={watched ? "$red9" : "rgba(255,255,255,0.2)"}
                   disabled={watchedLoading}
                   onPress={toggleWatched}
+                  p="$0"
                 >
-                  {watched ? "Watched" : "Mark Watched"}
+                  <Text fos="$5">{watched ? "♥" : "♡"}</Text>
                 </Button>
               )}
             </XStack>
 
+            {/* TV Tab Switcher */}
             {isTv && (
               <XStack
                 mt="$4"
@@ -491,9 +600,23 @@ export default function MediaDetailScreen() {
               </YStack>
             ) : (
               <YStack px="$4" pt="$5" gap="$6">
+                {/* Tagline */}
+                {details.tagline ? (
+                  <Text
+                    color="$color"
+                    opacity={0.55}
+                    fos="$4"
+                    fow="600"
+                    fontStyle="italic"
+                  >
+                    "{details.tagline}"
+                  </Text>
+                ) : null}
+
+                {/* About / Overview */}
                 <YStack gap="$2">
                   <Text color="$color" fow="800" fos="$6">
-                    Overview
+                    About
                   </Text>
                   <Text color="$color" opacity={0.72} fos="$4" lh="$5">
                     {details.overview ||
@@ -501,6 +624,7 @@ export default function MediaDetailScreen() {
                   </Text>
                 </YStack>
 
+                {/* Top Cast */}
                 <YStack gap="$3">
                   <Text color="$color" fow="800" fos="$6">
                     Top Cast
@@ -575,6 +699,38 @@ export default function MediaDetailScreen() {
     </YStack>
   );
 }
+
+const styles = StyleSheet.create({
+  gradientOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "65%",
+    // Gradient simulated with a semi-transparent layer darkening at bottom
+    backgroundColor: "transparent",
+    // React Native doesn't support CSS gradients; use a layered approach
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-start",
+  },
+  logoImage: {
+    width: 220,
+    height: 80,
+    alignSelf: "flex-start",
+  },
+  titleText: {
+    textShadowColor: "rgba(0,0,0,0.8)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
+  },
+});
 
 function SeasonCard({
   season,

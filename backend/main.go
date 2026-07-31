@@ -104,6 +104,20 @@ type SeasonDetails struct {
 	Episodes     []Episode `json:"episodes"`
 }
 
+type Image struct {
+	FilePath    string  `json:"file_path"`
+	AspectRatio float64 `json:"aspect_ratio"`
+	Width       int64   `json:"width"`
+	Height      int64   `json:"height"`
+}
+
+type Video struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Site string `json:"site"`
+	Type string `json:"type"`
+}
+
 type MediaDetails struct {
 	TMDBMedia
 	Runtime         int64        `json:"runtime,omitempty"`
@@ -113,15 +127,29 @@ type MediaDetails struct {
 	Overview        string       `json:"overview"`
 	Genres          []Genre      `json:"genres"`
 	Cast            []CastMember `json:"cast"`
+	Logos           []Image      `json:"logos,omitempty"`
+	Trailers        []Video      `json:"trailers,omitempty"`
+	Status          string       `json:"status,omitempty"`
+	Tagline         string       `json:"tagline,omitempty"`
 }
 
 type tmdbCredits struct {
 	Cast []CastMember `json:"cast"`
 }
 
+type tmdbImagesResponse struct {
+	Logos []Image `json:"logos"`
+}
+
+type tmdbVideosResult struct {
+	Results []Video `json:"results"`
+}
+
 type tmdbMediaDetailsResponse struct {
 	MediaDetails
-	Credits tmdbCredits `json:"credits"`
+	Credits tmdbCredits      `json:"credits"`
+	Images  tmdbImagesResponse `json:"images"`
+	Videos  tmdbVideosResult   `json:"videos"`
 }
 
 // TMDBResponse matches the list response from TMDB endpoints
@@ -589,7 +617,8 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 		detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d", mediaType, id)
 		var response tmdbMediaDetailsResponse
 		if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
-			"append_to_response": "credits",
+			"append_to_response":    "credits,images,videos",
+			"include_image_language": "en,null",
 		}, &response); err != nil {
 			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
 			var ok bool
@@ -602,6 +631,23 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			detailsVal.ID = id
 			detailsVal.MediaType = mediaType
 			detailsVal.Cast = topCast(response.Credits.Cast, 12)
+			// Pick up to 3 English logos
+			logos := response.Images.Logos
+			if len(logos) > 3 {
+				logos = logos[:3]
+			}
+			detailsVal.Logos = logos
+			// Pick YouTube trailers only
+			var trailers []Video
+			for _, v := range response.Videos.Results {
+				if v.Site == "YouTube" && (v.Type == "Trailer" || v.Type == "Teaser") {
+					trailers = append(trailers, v)
+					if len(trailers) >= 3 {
+						break
+					}
+				}
+			}
+			detailsVal.Trailers = trailers
 			details = &detailsVal
 		}
 	}

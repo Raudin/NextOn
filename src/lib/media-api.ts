@@ -37,6 +37,20 @@ export interface Season {
   poster_path?: string;
 }
 
+export interface MediaImage {
+  file_path: string;
+  aspect_ratio: number;
+  width: number;
+  height: number;
+}
+
+export interface MediaVideo {
+  key: string;
+  name: string;
+  site: string;
+  type: string;
+}
+
 export interface MediaDetails extends TMDBMedia {
   runtime?: number;
   episode_run_time?: number[];
@@ -45,6 +59,10 @@ export interface MediaDetails extends TMDBMedia {
   overview: string;
   genres: Genre[];
   cast: CastMember[];
+  logos?: MediaImage[];
+  trailers?: MediaVideo[];
+  status?: string;
+  tagline?: string;
 }
 
 export interface Episode {
