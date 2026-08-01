@@ -7,15 +7,19 @@ interface AuthContextType {
   token: string | null;
   user: User | null;
   isLoading: boolean;
+  themeMode: "light" | "dark" | "system";
+  setThemeMode: (mode: "light" | "dark" | "system") => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateUser: (updatedUser: User) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "nexton_auth_token";
 const USER_KEY = "nexton_auth_user";
+const THEME_KEY = "nexton_theme_mode";
 
 // Safe wrapper for Web fallback since SecureStore only runs on native platforms
 const storage = {
@@ -59,6 +63,7 @@ const storage = {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [themeMode, setThemeModeState] = useState<"light" | "dark" | "system">("system");
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -66,6 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const storedToken = await storage.getItem(TOKEN_KEY);
         const storedUserJson = await storage.getItem(USER_KEY);
+        const storedTheme = await storage.getItem(THEME_KEY);
 
         if (storedToken) {
           setToken(storedToken);
@@ -75,6 +81,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (storedUserJson) {
           setUser(JSON.parse(storedUserJson));
         }
+
+        if (storedTheme === "light" || storedTheme === "dark" || storedTheme === "system") {
+          setThemeModeState(storedTheme);
+        }
       } catch (err) {
         console.error("Failed to load stored authentication", err);
       } finally {
@@ -83,6 +93,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     loadStoredAuth();
   }, []);
+
+  const setThemeMode = async (mode: "light" | "dark" | "system") => {
+    setThemeModeState(mode);
+    await storage.setItem(THEME_KEY, mode);
+  };
+
+  const updateUser = async (updatedUser: User) => {
+    setUser(updatedUser);
+    await storage.setItem(USER_KEY, JSON.stringify(updatedUser));
+  };
 
   const login = async (email: string, password: string) => {
     const res = await loginUser({ email, password });
@@ -119,7 +139,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ token, user, isLoading, login, signup, logout }}>
+    <AuthContext.Provider
+      value={{
+        token,
+        user,
+        isLoading,
+        themeMode,
+        setThemeMode,
+        login,
+        signup,
+        logout,
+        updateUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

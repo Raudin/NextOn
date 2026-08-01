@@ -21,10 +21,13 @@ import (
 
 // GORM Models
 type User struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash string    `gorm:"not null" json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	Email                string    `gorm:"uniqueIndex;not null" json:"email"`
+	PasswordHash         string    `gorm:"not null" json:"-"`
+	Name                 string    `json:"name"`
+	AvatarURL            string    `json:"avatar_url"`
+	NotificationsEnabled bool      `gorm:"default:true" json:"notifications_enabled"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type WatchlistItem struct {
@@ -298,6 +301,12 @@ func main() {
 	r.GET("/api/watchlist", AuthMiddleware(), handleGetWatchlist)
 	r.DELETE("/api/watchlist/:id", AuthMiddleware(), handleDeleteWatchlist)
 
+	// Profile (Private, authenticated)
+	r.GET("/api/profile", AuthMiddleware(), handleGetProfile)
+	r.PUT("/api/profile", AuthMiddleware(), handleUpdateProfile)
+	r.POST("/api/profile/clear-history", AuthMiddleware(), handleClearWatchHistory)
+	r.DELETE("/api/profile/account", AuthMiddleware(), handleDeleteAccount)
+
 	// Media Details (Publicly browsable)
 	r.GET("/api/media/movie/:id", handleMovieDetails)
 	r.GET("/api/media/tv/:id", handleTvDetails)
@@ -357,10 +366,16 @@ func handleSignup(c *gin.Context) {
 		return
 	}
 
+	emailParts := strings.Split(email, "@")
+	defaultName := emailParts[0]
+
 	user := User{
-		Email:        email,
-		PasswordHash: string(hashedPassword),
-		CreatedAt:    time.Now(),
+		Email:                email,
+		PasswordHash:         string(hashedPassword),
+		Name:                 defaultName,
+		AvatarURL:            "https://api.dicebear.com/7.x/bottts/svg?seed=" + defaultName,
+		NotificationsEnabled: true,
+		CreatedAt:            time.Now(),
 	}
 
 	if err := db.Create(&user).Error; err != nil {
@@ -383,10 +398,7 @@ func handleSignup(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"token": tokenString,
-		"user": gin.H{
-			"id":    user.ID,
-			"email": user.Email,
-		},
+		"user":  user,
 	})
 }
 
@@ -410,6 +422,15 @@ func handleLogin(c *gin.Context) {
 		return
 	}
 
+	// Backfill name and avatar if empty
+	if user.Name == "" {
+		emailParts := strings.Split(user.Email, "@")
+		user.Name = emailParts[0]
+		user.AvatarURL = "https://api.dicebear.com/7.x/bottts/svg?seed=" + user.Name
+		user.NotificationsEnabled = true
+		db.Save(&user)
+	}
+
 	// Generate JWT Token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID,
@@ -425,10 +446,7 @@ func handleLogin(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": tokenString,
-		"user": gin.H{
-			"id":    user.ID,
-			"email": user.Email,
-		},
+		"user":  user,
 	})
 }
 
@@ -1486,4 +1504,206 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 		return nil, false
 	}
 	return &details, true
+}
+
+func calculateStreakGo(watched []WatchedItem) int {
+	if len(watched) == 0 {
+		return 0
+	}
+
+	// Extract unique date strings "YYYY-MM-DD"
+	dateMap := make(map[string]bool)
+	for _, item := range watched {
+		if !item.WatchedAt.IsZero() {
+			dateStr := item.WatchedAt.Format("2006-01-02")
+			dateMap[dateStr] = true
+		}
+	}
+
+	if len(dateMap) == 0 {
+		return 0
+	}
+
+	// Sort dates in descending order
+	var uniqueDates []string
+	for d := range dateMap {
+		uniqueDates = append(uniqueDates, d)
+	}
+	sort.Slice(uniqueDates, func(i, j int) bool {
+		return uniqueDates[i] > uniqueDates[j]
+	})
+
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	yesterdayStr := now.AddDate(0, 0, -1).Format("2006-01-02")
+
+	mostRecent := uniqueDates[0]
+	if mostRecent != todayStr && mostRecent != yesterdayStr {
+		return 0
+	}
+
+	streak := 1
+	currentDate, _ := time.Parse("2006-01-02", mostRecent)
+
+	for i := 1; i < len(uniqueDates); i++ {
+		nextDate, _ := time.Parse("2006-01-02", uniqueDates[i])
+		diff := currentDate.Sub(nextDate)
+		diffDays := int(diff.Hours() / 24)
+
+		if diffDays == 1 {
+			streak++
+			currentDate = nextDate
+		} else if diffDays > 1 {
+			break
+		}
+	}
+
+	return streak
+}
+
+func handleGetProfile(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
+	var user User
+	if err := db.First(&user, userUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Aggregate stats from watch_history
+	var watchedItems []WatchedItem
+	db.Where("user_id = ?", userUID).Find(&watchedItems)
+
+	var totalMoviesWatched int64
+	var totalEpisodesWatched int64
+	for _, item := range watchedItems {
+		if item.MediaType == "movie" {
+			totalMoviesWatched++
+		} else if item.MediaType == "tv" {
+			totalEpisodesWatched++
+		}
+	}
+
+	totalWatchTimeMinutes := (totalMoviesWatched * 120) + (totalEpisodesWatched * 45)
+	currentXP := (totalMoviesWatched * 120) + (totalEpisodesWatched * 45)
+	currentLevel := currentXP / 1000
+	streakDays := calculateStreakGo(watchedItems)
+
+	c.JSON(http.StatusOK, gin.H{
+		"user": user,
+		"stats": gin.H{
+			"total_movies_watched":     totalMoviesWatched,
+			"total_episodes_watched":   totalEpisodesWatched,
+			"total_watch_time_minutes": totalWatchTimeMinutes,
+			"current_xp":               currentXP,
+			"current_level":            currentLevel,
+			"streak_days":              streakDays,
+		},
+	})
+}
+
+type UpdateProfileReq struct {
+	Name                 *string `json:"name"`
+	AvatarURL            *string `json:"avatar_url"`
+	NotificationsEnabled *bool   `json:"notifications_enabled"`
+}
+
+func handleUpdateProfile(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
+	var req UpdateProfileReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid profile payload"})
+		return
+	}
+
+	var user User
+	if err := db.First(&user, userUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if req.Name != nil {
+		user.Name = *req.Name
+	}
+	if req.AvatarURL != nil {
+		user.AvatarURL = *req.AvatarURL
+	}
+	if req.NotificationsEnabled != nil {
+		user.NotificationsEnabled = *req.NotificationsEnabled
+	}
+
+	if err := db.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
+}
+
+func handleClearWatchHistory(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
+	if err := db.Where("user_id = ?", userUID).Delete(&WatchedItem{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear watch history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Watch history cleared successfully"})
+}
+
+func handleDeleteAccount(c *gin.Context) {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userUID := userID.(uint)
+
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Where("user_id = ?", userUID).Delete(&WatchedItem{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete watch history"})
+		return
+	}
+
+	if err := tx.Where("user_id = ?", userUID).Delete(&WatchlistItem{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete watchlist"})
+		return
+	}
+
+	if err := tx.Delete(&User{}, userUID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user account"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
 }
