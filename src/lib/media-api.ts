@@ -106,6 +106,24 @@ export interface DiscoverResponse {
 export interface User {
   id: number;
   email: string;
+  name?: string;
+  avatar_url?: string;
+  notifications_enabled?: boolean;
+  created_at?: string;
+}
+
+export interface ProfileStats {
+  total_movies_watched: number;
+  total_episodes_watched: number;
+  total_watch_time_minutes: number;
+  current_xp: number;
+  current_level: number;
+  streak_days: number;
+}
+
+export interface ProfileResponse {
+  user: User;
+  stats: ProfileStats;
 }
 
 export interface AuthResponse {
@@ -302,3 +320,26 @@ export const fetchEpisodeDetails = (
   apiFetch<Episode>(
     `/api/media/tv/${seriesId}/season/${season}/episode/${episode}`,
   );
+
+export const fetchUserProfile = () =>
+  apiFetch<ProfileResponse>("/api/profile");
+
+export const updateUserProfile = (payload: {
+  name?: string;
+  avatar_url?: string;
+  notifications_enabled?: boolean;
+}) =>
+  apiFetch<User>("/api/profile", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const clearWatchHistory = () =>
+  apiFetch<{ message: string }>("/api/profile/clear-history", {
+    method: "POST",
+  });
+
+export const deleteUserAccount = () =>
+  apiFetch<{ message: string }>("/api/profile/account", {
+    method: "DELETE",
+  });

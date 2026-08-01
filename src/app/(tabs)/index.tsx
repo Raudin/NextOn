@@ -145,11 +145,19 @@ export default function HomeScreen() {
   }, [watchlistItems]);
 
   const profileStats = useMemo(() => {
-    const totalWatched = watchedHistory.length;
-    const xp = totalWatched * 100;
-    const level = Math.floor(xp / 500) + 1;
-    const xpInLevel = xp % 500;
-    const percentage = xpInLevel / 500;
+    let movies = 0;
+    let episodes = 0;
+    for (const item of watchedHistory) {
+      if (item.media_type === "movie") {
+        movies++;
+      } else if (item.media_type === "tv") {
+        episodes++;
+      }
+    }
+    const xp = (movies * 120) + (episodes * 45);
+    const level = Math.floor(xp / 1000);
+    const xpInLevel = xp % 1000;
+    const percentage = xpInLevel / 1000;
     const title = getLevelTitle(level);
     const streak = calculateStreak(watchedHistory);
 
@@ -193,7 +201,7 @@ export default function HomeScreen() {
                   Lv. {profileStats.level} {profileStats.title}
                 </Text>
                 <Text color="$color" opacity={0.6} fos="$2">
-                  {profileStats.xpInLevel} / 500 XP
+                  {profileStats.xpInLevel} / 1000 XP
                 </Text>
               </YStack>
               <XStack ai="center" gap="$1" bg="$background" px="$3" py="$1.5" borderRadius="$4">
