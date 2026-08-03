@@ -15,6 +15,8 @@ export interface TMDBMedia {
   media_type?: "movie" | "tv";
   release_date?: string;
   first_air_date?: string;
+  added_at?: string;
+  last_watched_at?: string;
 }
 
 export interface Genre {

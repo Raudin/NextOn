@@ -184,7 +184,7 @@ export default function HomeScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'web' ? 70 : 0 }]} edges={["top"]}>
         <YStack f={1} px="$4" gap="$4">
           {/* Top Header: Profile Summary */}
           <YStack
@@ -359,7 +359,6 @@ function UpNextCard({
   }, [show.id, onFullyWatched]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadNextEpisode();
   }, [loadNextEpisode]);
 
@@ -468,7 +467,7 @@ function UpNextCard({
   if (loading) {
     return (
       <YStack
-        h={100}
+        h={136}
         ai="center"
         jc="center"
         bg="$backgroundElement"
@@ -484,7 +483,7 @@ function UpNextCard({
   if (error) {
     return (
       <YStack
-        h={100}
+        h={136}
         p="$3"
         ai="center"
         jc="center"
@@ -521,13 +520,19 @@ function UpNextCard({
   const seasonStr = String(episode.season_number).padStart(2, "0");
   const episodeStr = String(episode.episode_number).padStart(2, "0");
 
-  const showPoster = show.poster_path ? imageUrl(show.poster_path) : null;
+  const imageSource = episode.still_path
+    ? imageUrl(episode.still_path)
+    : showDetails?.backdrop_path
+      ? imageUrl(showDetails.backdrop_path)
+      : show.poster_path
+        ? imageUrl(show.poster_path)
+        : null;
 
   return (
     <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
       <XStack
         gap="$3"
-        p="$3"
+        p="$2"
         borderRadius="$4"
         bg="$backgroundElement"
         borderWidth={1}
@@ -535,65 +540,63 @@ function UpNextCard({
         pressStyle={{ opacity: 0.88 }}
         onPress={handleCardPress}
         ai="center"
-        jc="space-between"
       >
-        <XStack gap="$3" f={1} ai="center">
-          <YStack
-            w={48}
-            h={72}
-            borderRadius="$2"
-            overflow="hidden"
-            bg="$background"
-          >
-            {showPoster ? (
-              <Image
-                source={{ uri: showPoster }}
-                style={styles.posterImage}
-                contentFit="cover"
-              />
-            ) : (
-              <YStack f={1} ai="center" jc="center">
-                <Text color="$color" opacity={0.45} fos="$1" ta="center">
-                  No art
-                </Text>
-              </YStack>
-            )}
-          </YStack>
-
-          <YStack f={1} gap="$1" py="$1">
-            <Text
-              color="$color"
-              fow="900"
-              fos="$3"
-              numberOfLines={1}
-            >
-              {mediaTitle(show)}
-            </Text>
-            <Text color="$color" opacity={0.6} fow="500" fos="$2" numberOfLines={2}>
-              S{seasonStr}E{episodeStr} - {episode.name}
-            </Text>
-          </YStack>
-        </XStack>
-
-        <Button
-          size="$4"
-          bg="$green10"
-          hoverStyle={{ bg: "$green11" }}
-          pressStyle={{ bg: "$green9" }}
-          circular
-          disabled={marking}
-          onPress={(event: any) => {
-            event.stopPropagation();
-            animateAndMarkWatched();
-          }}
-          style={styles.checkmarkButton}
+        <YStack
+          w={96}
+          h={64}
+          borderRadius="$3"
+          overflow="hidden"
+          bg="$background"
         >
-          {marking ? (
-            <Spinner size="small" color="white" />
+          {imageSource ? (
+            <Image
+              source={{ uri: imageSource }}
+              style={{ width: "100%", height: "100%" }}
+              contentFit="cover"
+            />
           ) : (
-            <Text color="white" fow="bold" fos="$5">✓</Text>
+            <YStack f={1} ai="center" jc="center">
+              <Text color="$color" opacity={0.45} fos="$1">
+                No art
+              </Text>
+            </YStack>
           )}
-        </Button>
+        </YStack>
+
+        <YStack f={1} jc="center" gap="$1" py="$1">
+          <Text
+            color="$color"
+            fow="900"
+            fos="$3"
+            numberOfLines={1}
+          >
+            {mediaTitle(show)}
+          </Text>
+          <Text color="$color" opacity={0.8} fow="700" fos="$2" numberOfLines={1}>
+            S{seasonStr} E{episodeStr} • {episode.name}
+          </Text>
+          <XStack mt="$1" ai="center" jc="space-between" flexWrap="wrap" gap="$2">
+            {episode.air_date ? (
+              <Text color="$color" opacity={0.45} fos="$1" numberOfLines={1}>
+                {episode.air_date}
+              </Text>
+            ) : (
+              <YStack />
+            )}
+            <Button
+              size="$2"
+              theme="purple"
+              borderRadius="$3"
+              disabled={marking}
+              onPress={(event: any) => {
+                event.stopPropagation();
+                animateAndMarkWatched();
+              }}
+            >
+              {marking ? <Spinner size="small" /> : "✓ Mark Watched"}
+            </Button>
+          </XStack>
+        </YStack>
       </XStack>
     </Animated.View>
   );
@@ -609,13 +612,5 @@ const styles = StyleSheet.create({
   posterImage: {
     width: "100%",
     height: "100%",
-  },
-  checkmarkButton: {
-    width: 44,
-    height: 44,
-    minHeight: 44,
-    minWidth: 44,
-    alignItems: "center",
-    justifyContent: "center",
   },
 });

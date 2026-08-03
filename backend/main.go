@@ -57,15 +57,17 @@ type WatchedItem struct {
 
 // TMDBMedia represents a movie or TV show item from TMDB
 type TMDBMedia struct {
-	ID           int64   `json:"id"`
-	Title        string  `json:"title,omitempty"`
-	Name         string  `json:"name,omitempty"`
-	PosterPath   string  `json:"poster_path"`
-	BackdropPath string  `json:"backdrop_path"`
-	VoteAverage  float64 `json:"vote_average"`
-	MediaType    string  `json:"media_type,omitempty"`
-	ReleaseDate  string  `json:"release_date,omitempty"`
-	FirstAirDate string  `json:"first_air_date,omitempty"`
+	ID            int64      `json:"id"`
+	Title         string     `json:"title,omitempty"`
+	Name          string     `json:"name,omitempty"`
+	PosterPath    string     `json:"poster_path"`
+	BackdropPath  string     `json:"backdrop_path"`
+	VoteAverage   float64    `json:"vote_average"`
+	MediaType     string     `json:"media_type,omitempty"`
+	ReleaseDate   string     `json:"release_date,omitempty"`
+	FirstAirDate  string     `json:"first_air_date,omitempty"`
+	AddedAt       time.Time  `json:"added_at,omitempty"`
+	LastWatchedAt *time.Time `json:"last_watched_at,omitempty"`
 }
 
 type Genre struct {
@@ -545,16 +547,25 @@ func handleGetWatchlist(c *gin.Context) {
 
 	items := make([]TMDBMedia, 0, len(dbItems))
 	for _, dbItem := range dbItems {
+		var lastWatched *time.Time
+		var wItem WatchedItem
+		if err := db.Where("user_id = ? AND media_id = ? AND media_type = ?", userUID, dbItem.MediaID, dbItem.MediaType).
+			Order("watched_at DESC").First(&wItem).Error; err == nil {
+			lastWatched = &wItem.WatchedAt
+		}
+
 		items = append(items, TMDBMedia{
-			ID:           dbItem.MediaID,
-			Title:        dbItem.Title,
-			Name:         dbItem.Name,
-			PosterPath:   dbItem.PosterPath,
-			BackdropPath: dbItem.BackdropPath,
-			VoteAverage:  dbItem.VoteAverage,
-			MediaType:    dbItem.MediaType,
-			ReleaseDate:  dbItem.ReleaseDate,
-			FirstAirDate: dbItem.FirstAirDate,
+			ID:            dbItem.MediaID,
+			Title:         dbItem.Title,
+			Name:          dbItem.Name,
+			PosterPath:    dbItem.PosterPath,
+			BackdropPath:  dbItem.BackdropPath,
+			VoteAverage:   dbItem.VoteAverage,
+			MediaType:     dbItem.MediaType,
+			ReleaseDate:   dbItem.ReleaseDate,
+			FirstAirDate:  dbItem.FirstAirDate,
+			AddedAt:       dbItem.CreatedAt,
+			LastWatchedAt: lastWatched,
 		})
 	}
 

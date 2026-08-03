@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { useEffect, useMemo, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Platform } from "react-native";
 import {
   Button,
   Input,
@@ -98,6 +99,7 @@ export default function DiscoverScreen() {
   }, [searchQuery]);
 
   const toggleWatchlist = async (item: TMDBMedia) => {
+    console.log("Toggle watchlist clicked for item ID:", item.id, "Title:", item.title || item.name);
     if (!token) {
       router.push("/auth");
       return;
@@ -153,7 +155,7 @@ export default function DiscoverScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <SafeAreaView style={{ flex: 1, paddingTop: Platform.OS === 'web' ? 70 : 0 }} edges={["top"]}>
         <YStack f={1} px="$4">
           <YStack mt="$2" mb="$3">
             <XStack ai="center" jc="space-between">
@@ -172,28 +174,35 @@ export default function DiscoverScreen() {
               )}
             </XStack>
 
+            {/* Pill/Capsule style search bar matching watchlist */}
             <XStack
               mt="$3"
               ai="center"
               bg="$backgroundElement"
-              borderRadius="$5"
-              px="$3"
+              borderRadius="$10"
+              px="$3.5"
               borderWidth={1}
               borderColor="$borderColor"
+              h={44}
             >
-              <Text fos="$3" color="$color" opacity={0.5} mr="$2">
-                Search
+              <Text fos="$4" opacity={0.5} mr="$2">
+                🔍
               </Text>
               <Input
                 unstyled
                 f={1}
-                py="$3"
+                h={38}
+                p={0}
                 color="$color"
                 placeholder="Search movies and TV shows"
                 placeholderTextColor="$color10"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 keyboardAppearance="dark"
+                style={{
+                  color: "white",
+                  fontSize: 14,
+                }}
               />
             </XStack>
           </YStack>
@@ -374,7 +383,7 @@ function MediaCard({
         )}
 
         <RatingBadge rating={item.vote_average} />
-        <WatchlistButton added={added} onPress={onToggle} />
+        <WatchlistButton item={item} added={added} onPress={onToggle} />
       </YStack>
 
       <Text fontFamily="$body" fos="$2" fow="700" color="$color" numberOfLines={1}>
@@ -435,16 +444,17 @@ function SearchRow({
         </YStack>
         <XStack ai="center" jc="space-between">
           <RatingPill rating={item.vote_average} />
-          <WatchlistButton added={added} onPress={onToggle} />
+          <WatchlistButton item={item} added={added} onPress={onToggle} />
         </XStack>
       </YStack>
     </XStack>
   );
 }
 
-function WatchlistButton({ added, onPress }: { added: boolean; onPress: () => void }) {
+function WatchlistButton({ item, added, onPress }: { item: TMDBMedia; added: boolean; onPress: () => void }) {
   return (
     <Button
+      id={`discover-add-${item.id}`}
       pos="absolute"
       bottom="$2"
       right="$2"

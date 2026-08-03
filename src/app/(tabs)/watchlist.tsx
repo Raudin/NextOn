@@ -1,28 +1,25 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { Image } from "expo-image";
-import { useCallback, useState, useEffect } from "react";
-import { Animated } from "react-native";
+import { useCallback, useState, useEffect, useMemo } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { Platform } from "react-native";
+import { Button, ScrollView, Spinner, Text, XStack, YStack, Input } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
 
 import {
-  BACKDROP_IMAGE_BASE_URL,
   fetchMediaDetails,
   fetchSeasonEpisodes,
   fetchWatchedStatus,
   fetchWatchlist,
   imageUrl,
-  markWatched,
   mediaTitle,
-  releaseYear,
-  removeFromWatchlist,
   type Episode,
   type MediaDetails,
   type TMDBMedia,
 } from "@/lib/media-api";
 
 type Tab = "movies" | "tv";
+type SortOption = "alphabetical" | "recently_watched" | "recently_added";
 
 export default function WatchlistScreen() {
   const router = useRouter();
@@ -30,7 +27,10 @@ export default function WatchlistScreen() {
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("movies");
+  const [activeTab, setActiveTab] = useState<Tab>("tv");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("recently_added");
+  const [showSortMenu, setShowSortMenu] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !token) {
@@ -59,9 +59,54 @@ export default function WatchlistScreen() {
     }, [loadWatchlist, token]),
   );
 
-  const handleFullyWatched = useCallback((id: number) => {
-    setItems((current) => current.filter((item) => item.id !== id));
-  }, []);
+  const openDetails = (item: TMDBMedia) => {
+    const type = item.media_type || (item.title ? "movie" : "tv");
+    router.push({
+      pathname: "/media/[type]/[id]",
+      params: { type, id: String(item.id) },
+    } as any);
+  };
+
+  const moviesCount = useMemo(() => items.filter(i => (i.media_type || "movie") === "movie").length, [items]);
+  const showsCount = useMemo(() => items.filter(i => i.media_type === "tv").length, [items]);
+
+  // 3. Filter and Sort Watchlist items
+  const filteredAndSortedItems = useMemo(() => {
+    let filtered = items.filter((item) => {
+      const type = item.media_type || (item.title ? "movie" : "tv");
+      return type === (activeTab === "movies" ? "movie" : "tv");
+    });
+
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter((item) => {
+        const title = (item.title || item.name || "").toLowerCase();
+        return title.includes(q);
+      });
+    }
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "alphabetical") {
+        const titleA = (a.title || a.name || "").toLowerCase();
+        const titleB = (b.title || b.name || "").toLowerCase();
+        return titleA.localeCompare(titleB);
+      } else if (sortBy === "recently_watched") {
+        const timeA = a.last_watched_at ? new Date(a.last_watched_at).getTime() : 0;
+        const timeB = b.last_watched_at ? new Date(b.last_watched_at).getTime() : 0;
+        if (timeA !== timeB) {
+          return timeB - timeA;
+        }
+        const addA = a.added_at ? new Date(a.added_at).getTime() : 0;
+        const addB = b.added_at ? new Date(b.added_at).getTime() : 0;
+        return addB - addA;
+      } else if (sortBy === "recently_added") {
+        const timeA = a.added_at ? new Date(a.added_at).getTime() : 0;
+        const timeB = b.added_at ? new Date(b.added_at).getTime() : 0;
+        return timeB - timeA;
+      }
+      return 0;
+    });
+  }, [items, activeTab, searchQuery, sortBy]);
 
   if (authLoading) {
     return (
@@ -75,49 +120,154 @@ export default function WatchlistScreen() {
     return null;
   }
 
-  const removeItem = async (id: number) => {
-    const previous = items;
-    setItems((current) => current.filter((item) => item.id !== id));
-    try {
-      await removeFromWatchlist(id);
-    } catch (err: any) {
-      setItems(previous);
-      setError(err.message || String(err));
-    }
-  };
-
-  const openDetails = (item: TMDBMedia) => {
-    const type = item.media_type || (item.title ? "movie" : "tv");
-    router.push({
-      pathname: "/media/[type]/[id]",
-      params: { type, id: String(item.id) },
-    } as any);
-  };
-
-  const movies = items.filter(
-    (item) => (item.media_type || "movie") === "movie",
-  );
-  const shows = items.filter((item) => item.media_type === "tv");
-
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <YStack f={1} px="$4">
-          <XStack mt="$2" mb="$4" ai="center" jc="space-between">
-            <YStack>
-              <Text fow="900" fos="$9" color="$color">
-                Watchlist
-              </Text>
-              <Text color="$color" opacity={0.5} fos="$2">
-                Movies and shows saved for later
-              </Text>
-            </YStack>
-            <Button size="$3" circular chromeless onPress={loadWatchlist}>
-              ↻
-            </Button>
+      <SafeAreaView style={{ flex: 1, paddingTop: Platform.OS === 'web' ? 70 : 0 }} edges={["top"]}>
+        <YStack f={1} px="$4" pos="relative">
+          {/* Header Row: Text headers and Ellipsis Menu */}
+          <XStack mt="$2" mb="$3" ai="center" jc="space-between" pos="relative" zIndex={2000}>
+            {/* Side-by-side text-style headers */}
+            <XStack gap="$4" ai="flex-end">
+              <YStack onPress={() => setActiveTab("tv")} style={{ cursor: "pointer" }}>
+                <Text
+                  fow={activeTab === "tv" ? "900" : "700"}
+                  fos={activeTab === "tv" ? "$8" : "$6"}
+                  color="$color"
+                  opacity={activeTab === "tv" ? 1 : 0.4}
+                >
+                  Shows
+                </Text>
+              </YStack>
+              <YStack onPress={() => setActiveTab("movies")} style={{ cursor: "pointer" }}>
+                <Text
+                  fow={activeTab === "movies" ? "900" : "700"}
+                  fos={activeTab === "movies" ? "$8" : "$6"}
+                  color="$color"
+                  opacity={activeTab === "movies" ? 1 : 0.4}
+                >
+                  Movies
+                </Text>
+              </YStack>
+            </XStack>
+
+            <XStack gap="$1" ai="center">
+              <Button size="$3" circular chromeless onPress={loadWatchlist}>
+                ↻
+              </Button>
+              {/* Sorting Ellipsis Menu Button */}
+              <Button
+                id="sort-ellipsis-button"
+                size="$3"
+                circular
+                chromeless
+                onPress={() => setShowSortMenu(!showSortMenu)}
+              >
+                <Text fos={18} color="$color" fow="bold" letterSpacing={0.5}>•••</Text>
+              </Button>
+            </XStack>
+
+            {/* Floating Dropdown Sorting Menu */}
+            {showSortMenu && (
+              <YStack
+                pos="absolute"
+                top={44}
+                right={0}
+                bg="$backgroundElement"
+                borderRadius="$4"
+                borderWidth={1}
+                borderColor="$borderColor"
+                p="$2"
+                zIndex={3000}
+                elevation={5}
+                shadowColor="black"
+                shadowOffset={{ width: 0, height: 4 }}
+                shadowOpacity={0.25}
+                shadowRadius={8}
+                gap="$1"
+                w={180}
+              >
+                <Text px="$3" py="$1.5" fos="$1" fow="bold" color="$color" opacity={0.4} tt="uppercase">Sort By</Text>
+                <Button
+                  size="$3"
+                  chromeless
+                  bg={sortBy === "alphabetical" ? "$background" : "transparent"}
+                  onPress={() => { setSortBy("alphabetical"); setShowSortMenu(false); }}
+                  ai="center"
+                  jc="flex-start"
+                  p="$2"
+                >
+                  <Text color="$color" fow={sortBy === "alphabetical" ? "700" : "400"}>Alphabetically</Text>
+                </Button>
+                <Button
+                  size="$3"
+                  chromeless
+                  bg={sortBy === "recently_watched" ? "$background" : "transparent"}
+                  onPress={() => { setSortBy("recently_watched"); setShowSortMenu(false); }}
+                  ai="center"
+                  jc="flex-start"
+                  p="$2"
+                >
+                  <Text color="$color" fow={sortBy === "recently_watched" ? "700" : "400"}>Recently Watched</Text>
+                </Button>
+                <Button
+                  size="$3"
+                  chromeless
+                  bg={sortBy === "recently_added" ? "$background" : "transparent"}
+                  onPress={() => { setSortBy("recently_added"); setShowSortMenu(false); }}
+                  ai="center"
+                  jc="flex-start"
+                  p="$2"
+                >
+                  <Text color="$color" fow={sortBy === "recently_added" ? "700" : "400"}>Recently Added</Text>
+                </Button>
+              </YStack>
+            )}
           </XStack>
 
-          <WatchlistTabs activeTab={activeTab} onChange={setActiveTab} />
+          {/* Capsule/Pill style Search Bar */}
+          <XStack
+            bg="$backgroundElement"
+            borderRadius="$10"
+            borderWidth={1}
+            borderColor="$borderColor"
+            px="$3.5"
+            ai="center"
+            gap="$2"
+            h={44}
+            mb="$3"
+            zIndex={100}
+          >
+            <Text fos="$4" opacity={0.5}>🔍</Text>
+            <Input
+              f={1}
+              h={38}
+              p={0}
+              bg="transparent"
+              borderWidth={0}
+              placeholder={activeTab === "tv" ? "Search your shows" : "Search your movies"}
+              placeholderTextColor="$color10"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              unstyled
+              style={{
+                color: "white",
+                fontSize: 14,
+              }}
+            />
+            {searchQuery !== "" && (
+              <Button
+                size="$2"
+                circular
+                chromeless
+                onPress={() => setSearchQuery("")}
+                p={0}
+                h={24}
+                w={24}
+              >
+                <Text color="$color" opacity={0.5}>✕</Text>
+              </Button>
+            )}
+          </XStack>
 
           {loading ? (
             <YStack f={1} ai="center" jc="center" gap="$3">
@@ -139,7 +289,25 @@ export default function WatchlistScreen() {
                 Your watchlist is empty
               </Text>
               <Text color="$color" opacity={0.55} ta="center">
-                Add movies and TV shows from Discover and they will land here.
+                Add items from Discover and they will land here.
+              </Text>
+            </YStack>
+          ) : (activeTab === "tv" ? showsCount === 0 : moviesCount === 0) ? (
+            <YStack f={1} ai="center" jc="center" gap="$2" px="$5">
+              <Text fow="800" fos="$5" color="$color" ta="center">
+                No {activeTab === "tv" ? "shows" : "movies"} saved yet
+              </Text>
+              <Text color="$color" opacity={0.4} ta="center">
+                Add {activeTab === "tv" ? "TV shows" : "movies"} from Discover to see them here.
+              </Text>
+            </YStack>
+          ) : filteredAndSortedItems.length === 0 ? (
+            <YStack f={1} ai="center" jc="center" gap="$2" px="$5">
+              <Text fow="800" fos="$5" color="$color" ta="center">
+                No items found
+              </Text>
+              <Text color="$color" opacity={0.4} ta="center">
+                Try searching for something else.
               </Text>
             </YStack>
           ) : (
@@ -147,20 +315,16 @@ export default function WatchlistScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 120 }}
             >
-              {activeTab === "movies" ? (
-                <WatchlistGroup
-                  title="Movies"
-                  items={movies}
-                  onOpen={openDetails}
-                  onRemove={removeItem}
-                />
-              ) : (
-                <WatchlistGroupTV
-                  title="TV Shows"
-                  items={shows}
-                  onFullyWatched={handleFullyWatched}
-                />
-              )}
+              {/* 3-Column Poster Grid */}
+              <XStack flexWrap="wrap" gap="$3" jc="flex-start" mt="$2">
+                {filteredAndSortedItems.map((item) => (
+                  activeTab === "tv" ? (
+                    <TVShowGridCard key={item.id} show={item} onOpen={openDetails} />
+                  ) : (
+                    <MovieGridCard key={item.id} movie={item} onOpen={openDetails} />
+                  )
+                ))}
+              </XStack>
             </ScrollView>
           )}
         </YStack>
@@ -169,518 +333,150 @@ export default function WatchlistScreen() {
   );
 }
 
-function WatchlistTabs({
-  activeTab,
-  onChange,
-}: {
-  activeTab: Tab;
-  onChange: (tab: Tab) => void;
-}) {
-  return (
-    <XStack bg="$backgroundElement" p="$1" borderRadius="$4" mb="$4">
-      {(["movies", "tv"] as const).map((tab) => {
-        const active = activeTab === tab;
-        return (
-          <Button
-            key={tab}
-            flex={1}
-            borderRadius="$3"
-            bg={active ? "$background" : "transparent"}
-            color="$color"
-            opacity={active ? 1 : 0.6}
-            onPress={() => onChange(tab)}
-          >
-            {tab === "movies" ? "Movies" : "TV Shows"}
-          </Button>
-        );
-      })}
-    </XStack>
-  );
-}
+function CircularProgress({ percent }: { percent: number }) {
+  const activeColor = percent === 100 ? "#4ade80" : "#a855f7"; // green-400 or purple-500
+  const inactiveColor = "rgba(255, 255, 255, 0.25)";
 
-function WatchlistGroupTV({
-  title,
-  items,
-  onFullyWatched,
-}: {
-  title: string;
-  items: TMDBMedia[];
-  onFullyWatched: (id: number) => void;
-}) {
   return (
-    <YStack gap="$3">
-      <XStack ai="center" jc="space-between">
-        <Text color="$color" fow="800" fos="$6">
-          {title}
-        </Text>
-        <Text color="$color" opacity={0.45} fos="$1">
-          {items.length} items
-        </Text>
-      </XStack>
-
-      {items.length === 0 ? (
-        <YStack py="$5" ai="center" bg="$backgroundElement" borderRadius="$4">
-          <Text color="$color" opacity={0.5}>
-            No {title.toLowerCase()} saved yet
-          </Text>
-        </YStack>
-      ) : (
-        <YStack gap="$3">
-          {items.map((item) => (
-            <NextEpisodeCard
-              key={`${item.media_type || "tv"}-${item.id}`}
-              show={item}
-              onFullyWatched={onFullyWatched}
-            />
-          ))}
-        </YStack>
-      )}
+    <YStack
+      pos="absolute"
+      bottom={6}
+      right={6}
+      w={28}
+      h={28}
+      borderRadius={14}
+      borderWidth={2.5}
+      borderColor={activeColor}
+      borderTopColor={percent >= 25 ? activeColor : inactiveColor}
+      borderRightColor={percent >= 50 ? activeColor : inactiveColor}
+      borderBottomColor={percent >= 75 ? activeColor : inactiveColor}
+      bg="rgba(0,0,0,0.85)"
+      ai="center"
+      jc="center"
+      elevation={3}
+      shadowColor="black"
+      shadowOffset={{ width: 0, height: 1 }}
+      shadowOpacity={0.4}
+      shadowRadius={2}
+    >
+      <Text color="white" fos={8} fow="bold" ta="center">
+        {Math.round(percent)}
+      </Text>
     </YStack>
   );
 }
 
-function NextEpisodeCard({
+function TVShowGridCard({
   show,
-  onFullyWatched,
+  onOpen,
 }: {
   show: TMDBMedia;
-  onFullyWatched: (id: number) => void;
+  onOpen: (item: TMDBMedia) => void;
 }) {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [episode, setEpisode] = useState<Episode | null>(null);
-  const [showDetails, setShowDetails] = useState<MediaDetails | null>(null);
-  const [marking, setMarking] = useState(false);
-
-  const [fadeAnim] = useState(() => new Animated.Value(1));
-  const [scaleAnim] = useState(() => new Animated.Value(1));
-
-  const loadNextEpisode = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [watchedStatus, detailsData] = await Promise.all([
-        fetchWatchedStatus(show.id, "tv"),
-        fetchMediaDetails("tv", show.id),
-      ]);
-
-      setShowDetails(detailsData);
-
-      const watchedEpisodes = watchedStatus.episodes || [];
-      const watchedCountBySeason: Record<number, number> = {};
-      for (const ep of watchedEpisodes) {
-        watchedCountBySeason[ep.season] = (watchedCountBySeason[ep.season] || 0) + 1;
-      }
-
-      const regularSeasons = (detailsData.seasons || [])
-        .filter((s) => s.season_number >= 1)
-        .sort((a, b) => a.season_number - b.season_number);
-      const specialSeasons = (detailsData.seasons || [])
-        .filter((s) => s.season_number === 0);
-
-      const allSeasons = [...regularSeasons, ...specialSeasons];
-
-      let foundNext = false;
-      for (const s of allSeasons) {
-        const total = s.episode_count;
-        const watchedCount = watchedCountBySeason[s.season_number] || 0;
-        if (watchedCount < total) {
-          const seasonData = await fetchSeasonEpisodes(show.id, s.season_number);
-          const nextEp = seasonData.episodes.find(
-            (ep) =>
-              !watchedEpisodes.some(
-                (we) => we.season === ep.season_number && we.episode === ep.episode_number
-              )
-          );
-          if (nextEp) {
-            setEpisode(nextEp);
-            foundNext = true;
-            break;
-          }
-        }
-      }
-
-      if (!foundNext) {
-        onFullyWatched(show.id);
-      }
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [show.id, onFullyWatched]);
+  const [percentage, setPercentage] = useState<number | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadNextEpisode();
-  }, [loadNextEpisode]);
-
-  const animateAndMarkWatched = async () => {
-    if (!episode || marking) return;
-    setMarking(true);
-
-    // Fade out / scale down slightly before the transition
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 0.95,
-        duration: 250,
-        useNativeDriver: true,
-      }),
-    ]).start(async () => {
+    let active = true;
+    const getProgress = async () => {
       try {
-        await markWatched({
-          media_id: show.id,
-          media_type: "tv",
-          season_number: episode.season_number,
-          episode_number: episode.episode_number,
-        });
-
-        const watchedStatus = await fetchWatchedStatus(show.id, "tv");
-        const activeDetails = showDetails || (await fetchMediaDetails("tv", show.id));
+        const [watchedStatus, detailsData] = await Promise.all([
+          fetchWatchedStatus(show.id, "tv"),
+          fetchMediaDetails("tv", show.id),
+        ]);
+        if (!active) return;
 
         const watchedEpisodes = watchedStatus.episodes || [];
-        const watchedCountBySeason: Record<number, number> = {};
-        for (const ep of watchedEpisodes) {
-          watchedCountBySeason[ep.season] = (watchedCountBySeason[ep.season] || 0) + 1;
-        }
+        const regularWatched = watchedEpisodes.filter(ep => ep.season >= 1).length;
 
-        const regularSeasons = (activeDetails.seasons || [])
-          .filter((s) => s.season_number >= 1)
-          .sort((a, b) => a.season_number - b.season_number);
-        const specialSeasons = (activeDetails.seasons || [])
-          .filter((s) => s.season_number === 0);
+        const regularSeasons = (detailsData.seasons || [])
+          .filter((s) => s.season_number >= 1);
+        const totalEpisodes = regularSeasons.reduce((sum, s) => sum + s.episode_count, 0);
 
-        const allSeasons = [...regularSeasons, ...specialSeasons];
-
-        let foundNext = false;
-        for (const s of allSeasons) {
-          const total = s.episode_count;
-          const watchedCount = watchedCountBySeason[s.season_number] || 0;
-          if (watchedCount < total) {
-            const seasonData = await fetchSeasonEpisodes(show.id, s.season_number);
-            const nextEp = seasonData.episodes.find(
-              (ep) =>
-                !watchedEpisodes.some(
-                  (we) => we.season === ep.season_number && we.episode === ep.episode_number
-                )
-            );
-            if (nextEp) {
-              setEpisode(nextEp);
-              foundNext = true;
-              break;
-            }
-          }
-        }
-
-        if (!foundNext) {
-          onFullyWatched(show.id);
+        if (totalEpisodes > 0) {
+          const pct = (regularWatched / totalEpisodes) * 100;
+          setPercentage(pct);
         } else {
-          // Fade back in with the new episode details
-          Animated.parallel([
-            Animated.timing(fadeAnim, {
-              toValue: 1,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-            Animated.timing(scaleAnim, {
-              toValue: 1,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            setMarking(false);
-          });
+          setPercentage(0);
         }
-      } catch (err: any) {
-        setError(err.message || String(err));
-        // Reset animation on error
-        Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleAnim, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setMarking(false);
-        });
+      } catch {
+        if (active) setPercentage(0);
       }
-    });
-  };
-
-  if (loading) {
-    return (
-      <YStack
-        h={136}
-        ai="center"
-        jc="center"
-        bg="$backgroundElement"
-        borderRadius="$4"
-        borderWidth={1}
-        borderColor="$borderColor"
-      >
-        <Spinner size="small" color="$color" />
-      </YStack>
-    );
-  }
-
-  if (error) {
-    return (
-      <YStack
-        h={136}
-        p="$3"
-        ai="center"
-        jc="center"
-        bg="$backgroundElement"
-        borderRadius="$4"
-        borderWidth={1}
-        borderColor="$borderColor"
-        gap="$2"
-      >
-        <Text color="$red10" fos="$2" ta="center" numberOfLines={2}>
-          {error}
-        </Text>
-        <Button size="$2" onPress={loadNextEpisode}>
-          Retry
-        </Button>
-      </YStack>
-    );
-  }
-
-  if (!episode) return null;
-
-  const handleCardPress = () => {
-    router.push({
-      pathname: "/media/[type]/[id]/episode/[season]/[episode]",
-      params: {
-        type: "tv",
-        id: String(show.id),
-        season: String(episode.season_number),
-        episode: String(episode.episode_number),
-      },
-    } as any);
-  };
-
-  const handleShowPress = (event: any) => {
-    event.stopPropagation();
-    router.push({
-      pathname: "/media/[type]/[id]",
-      params: { type: "tv", id: String(show.id) },
-    } as any);
-  };
-
-  const seasonStr = String(episode.season_number).padStart(2, "0");
-  const episodeStr = String(episode.episode_number).padStart(2, "0");
-
-  const imageSource = episode.still_path
-    ? imageUrl(episode.still_path)
-    : showDetails?.backdrop_path
-      ? imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL)
-      : show.poster_path
-        ? imageUrl(show.poster_path)
-        : null;
+    };
+    getProgress();
+    return () => { active = false; };
+  }, [show.id]);
 
   return (
-    <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
-      <XStack
-        gap="$3"
-        p="$2"
-        borderRadius="$4"
-        bg="$backgroundElement"
-        borderWidth={1}
-        borderColor="$borderColor"
-        pressStyle={{ opacity: 0.88 }}
-        onPress={handleCardPress}
-        ai="center"
-      >
-        <YStack
-          w={96}
-          h={64}
-          borderRadius="$3"
-          overflow="hidden"
-          bg="$background"
-        >
-          {imageSource ? (
-            <Image
-              source={{ uri: imageSource }}
-              style={{ width: "100%", height: "100%" }}
-              contentFit="cover"
-            />
-          ) : (
-            <YStack f={1} ai="center" jc="center">
-              <Text color="$color" opacity={0.45} fos="$1">
-                No art
-              </Text>
-            </YStack>
-          )}
-        </YStack>
-
-        <YStack f={1} jc="center" gap="$1" py="$1">
-          <Text
-            color="$color"
-            fow="900"
-            fos="$3"
-            pressStyle={{ opacity: 0.7 }}
-            onPress={handleShowPress}
-            numberOfLines={1}
-          >
-            {mediaTitle(show)}
-          </Text>
-          <Text color="$color" opacity={0.8} fow="700" fos="$2" numberOfLines={1}>
-            S{seasonStr} E{episodeStr} • {episode.name}
-          </Text>
-          <XStack mt="$1" ai="center" jc="space-between" flexWrap="wrap" gap="$2">
-            {episode.air_date ? (
-              <Text color="$color" opacity={0.45} fos="$1" numberOfLines={1}>
-                {episode.air_date}
-              </Text>
-            ) : (
-              <YStack />
-            )}
-            <Button
-              size="$2"
-              theme="purple"
-              borderRadius="$3"
-              disabled={marking}
-              onPress={(event: any) => {
-                event.stopPropagation();
-                animateAndMarkWatched();
-              }}
-            >
-              {marking ? <Spinner size="small" /> : "✓ Mark Watched"}
-            </Button>
-          </XStack>
-        </YStack>
-      </XStack>
-    </Animated.View>
-  );
-}
-
-function WatchlistGroup({
-  title,
-  items,
-  onOpen,
-  onRemove,
-}: {
-  title: string;
-  items: TMDBMedia[];
-  onOpen: (item: TMDBMedia) => void;
-  onRemove: (id: number) => void;
-}) {
-  return (
-    <YStack gap="$3">
-      <XStack ai="center" jc="space-between">
-        <Text color="$color" fow="800" fos="$6">
-          {title}
-        </Text>
-        <Text color="$color" opacity={0.45} fos="$1">
-          {items.length} items
-        </Text>
-      </XStack>
-
-      {items.length === 0 ? (
-        <YStack py="$5" ai="center" bg="$backgroundElement" borderRadius="$4">
-          <Text color="$color" opacity={0.5}>
-            No {title.toLowerCase()} saved yet
-          </Text>
-        </YStack>
-      ) : (
-        <YStack gap="$3">
-          {items.map((item) => (
-            <WatchlistRow
-              key={`${item.media_type}-${item.id}`}
-              item={item}
-              onOpen={() => onOpen(item)}
-              onRemove={() => onRemove(item.id)}
-            />
-          ))}
-        </YStack>
-      )}
-    </YStack>
-  );
-}
-
-function WatchlistRow({
-  item,
-  onOpen,
-  onRemove,
-}: {
-  item: TMDBMedia;
-  onOpen: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <XStack
-      gap="$3"
-      p="$2"
-      borderRadius="$4"
-      bg="$backgroundElement"
-      borderWidth={1}
-      borderColor="$borderColor"
-      pressStyle={{ opacity: 0.88 }}
-      onPress={onOpen}
+    <YStack
+      w="30.5%"
+      mb="$3"
+      borderRadius="$3"
+      overflow="hidden"
+      pressStyle={{ opacity: 0.85 }}
+      onPress={() => onOpen(show)}
+      style={{ cursor: "pointer" }}
     >
-      <YStack
-        w={86}
-        h={126}
-        borderRadius="$3"
-        overflow="hidden"
-        bg="$background"
-      >
-        {item.poster_path ? (
+      <YStack aspectRatio={2 / 3} bg="$backgroundElement" borderRadius="$3" overflow="hidden" elevation={2} pos="relative">
+        {show.poster_path ? (
           <Image
-            source={{ uri: imageUrl(item.poster_path) }}
+            source={{ uri: imageUrl(show.poster_path) }}
             style={{ width: "100%", height: "100%" }}
             contentFit="cover"
           />
         ) : (
-          <YStack f={1} ai="center" jc="center">
-            <Text color="$color" opacity={0.45}>
-              No art
+          <YStack f={1} ai="center" jc="center" p="$1">
+            <Text color="$color" opacity={0.45} fos="$1" ta="center">
+              {mediaTitle(show)}
+            </Text>
+          </YStack>
+        )}
+
+        {percentage !== null && percentage > 0 && (
+          <CircularProgress percent={percentage} />
+        )}
+      </YStack>
+      <Text mt="$1.5" color="$color" fow="600" fos="$1" numberOfLines={1} ta="center">
+        {mediaTitle(show)}
+      </Text>
+    </YStack>
+  );
+}
+
+function MovieGridCard({
+  movie,
+  onOpen,
+}: {
+  movie: TMDBMedia;
+  onOpen: (item: TMDBMedia) => void;
+}) {
+  return (
+    <YStack
+      w="30.5%"
+      mb="$3"
+      borderRadius="$3"
+      overflow="hidden"
+      pressStyle={{ opacity: 0.85 }}
+      onPress={() => onOpen(movie)}
+      style={{ cursor: "pointer" }}
+    >
+      <YStack aspectRatio={2 / 3} bg="$backgroundElement" borderRadius="$3" overflow="hidden" elevation={2}>
+        {movie.poster_path ? (
+          <Image
+            source={{ uri: imageUrl(movie.poster_path) }}
+            style={{ width: "100%", height: "100%" }}
+            contentFit="cover"
+          />
+        ) : (
+          <YStack f={1} ai="center" jc="center" p="$1">
+            <Text color="$color" opacity={0.45} fos="$1" ta="center">
+              {mediaTitle(movie)}
             </Text>
           </YStack>
         )}
       </YStack>
-
-      <YStack f={1} jc="space-between" py="$1">
-        <YStack gap="$1">
-          <Text color="$color" fow="800" fos="$4" numberOfLines={2}>
-            {mediaTitle(item)}
-          </Text>
-          <Text color="$color" opacity={0.5} fos="$2" tt="uppercase">
-            {item.media_type || "movie"} {releaseYear(item)}
-          </Text>
-        </YStack>
-        <XStack ai="center" jc="space-between">
-          <Rating value={item.vote_average} />
-        </XStack>
-      </YStack>
-    </XStack>
-  );
-}
-
-function Rating({ value }: { value: number }) {
-  const full = Math.max(0, Math.min(5, Math.round(value / 2)));
-  const empty = 5 - full;
-  return (
-    <XStack ai="center" gap="$1">
-      <Text color="$yellow9" fos="$2">
-        {"★".repeat(full)}
-        {"☆".repeat(empty)}
+      <Text mt="$1.5" color="$color" fow="600" fos="$1" numberOfLines={1} ta="center">
+        {mediaTitle(movie)}
       </Text>
-      <Text color="$color" opacity={0.65} fos="$2">
-        {value.toFixed(1)}
-      </Text>
-    </XStack>
+    </YStack>
   );
 }
