@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { setApiToken, loginUser, signupUser, type User } from "@/lib/media-api";
@@ -94,17 +94,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadStoredAuth();
   }, []);
 
-  const setThemeMode = async (mode: "light" | "dark" | "system") => {
+  const setThemeMode = useCallback(async (mode: "light" | "dark" | "system") => {
     setThemeModeState(mode);
     await storage.setItem(THEME_KEY, mode);
-  };
+  }, []);
 
-  const updateUser = async (updatedUser: User) => {
+  const updateUser = useCallback(async (updatedUser: User) => {
     setUser(updatedUser);
     await storage.setItem(USER_KEY, JSON.stringify(updatedUser));
-  };
+  }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const res = await loginUser({ email, password });
     if (res.token && res.user) {
       setToken(res.token);
@@ -115,9 +115,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       throw new Error("Invalid response from server");
     }
-  };
+  }, []);
 
-  const signup = async (email: string, password: string) => {
+  const signup = useCallback(async (email: string, password: string) => {
     const res = await signupUser({ email, password });
     if (res.token && res.user) {
       setToken(res.token);
@@ -128,15 +128,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       throw new Error("Invalid response from server");
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     setToken(null);
     setUser(null);
     setApiToken(null);
     await storage.deleteItem(TOKEN_KEY);
     await storage.deleteItem(USER_KEY);
-  };
+  }, []);
 
   return (
     <AuthContext.Provider

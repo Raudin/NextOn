@@ -221,6 +221,13 @@ export default function ProfileScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <YStack px="$5" py="$6" gap="$6" maxWidth={600} alignSelf="center" w="100%">
 
+          {error && (
+            <YStack bg="$red2" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
+              <Text color="$red10" fow="bold" ta="center">{error}</Text>
+              <Text color="$red8" fos="$1" ta="center" mt="$1">Tap to dismiss</Text>
+            </YStack>
+          )}
+
           {/* Circular Avatar Section */}
           <YStack ai="center" gap="$4">
             <YStack pos="relative">
