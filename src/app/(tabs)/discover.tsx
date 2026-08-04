@@ -1,20 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
-import {
-  Button,
-  Input,
-  ScrollView,
-  Spinner,
-  Text,
-  XStack,
-  YStack,
-} from "tamagui";
 import { useAuth } from "@/context/AuthContext";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 
-import EmptyState from "@/components/EmptyState";
 import MediaCarousel from "@/components/Discover/MediaCarousel";
 import SearchRow from "@/components/Discover/SearchRow";
+import EmptyState from "@/components/EmptyState";
+import SearchField from "@/components/SearchField";
 
 import {
   addToWatchlist,
@@ -39,7 +32,7 @@ export default function DiscoverScreen() {
 
   const hasQuery = searchQuery.trim().length > 0;
 
-  const loadDiscover = async () => {
+  const loadDiscover = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,18 +55,20 @@ export default function DiscoverScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadDiscover();
   }, [token]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadDiscover();
+    }, [loadDiscover]),
+  );
 
   useEffect(() => {
     const query = searchQuery.trim();
     if (!query) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchResults([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+
       setSearching(false);
       return;
     }
@@ -121,7 +116,7 @@ export default function DiscoverScreen() {
       } else {
         await addToWatchlist(item);
       }
-    } catch (err) {
+    } catch {
       setWatchlistIds((current) => {
         const next = new Set(current);
         if (exists) {
@@ -174,30 +169,13 @@ export default function DiscoverScreen() {
               )}
             </XStack>
 
-            <XStack
-              mt="$3"
-              ai="center"
-              bg="$backgroundElement"
-              borderRadius="$5"
-              px="$3"
-              borderWidth={1}
-              borderColor="$borderColor"
-            >
-              <Text fos="$3" color="$color" opacity={0.5} mr="$2">
-                Search
-              </Text>
-              <Input
-                unstyled
-                f={1}
-                py="$3"
-                color="$color"
-                placeholder="Search movies and TV shows"
-                placeholderTextColor="$color10"
+            <YStack mt="$3">
+              <SearchField
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                keyboardAppearance="dark"
+                placeholder="Search movies and TV shows"
               />
-            </XStack>
+            </YStack>
           </YStack>
 
           {loading && (
@@ -232,7 +210,9 @@ export default function DiscoverScreen() {
                       Search Results
                     </Text>
                     <Text color="$color" opacity={0.45} fos="$1">
-                      {searching ? "Searching" : `${uniqueSearchResults.length} items`}
+                      {searching
+                        ? "Searching"
+                        : `${uniqueSearchResults.length} items`}
                     </Text>
                   </XStack>
 
