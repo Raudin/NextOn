@@ -1,5 +1,4 @@
-import React from "react";
-import { Button, XStack } from "tamagui";
+import { Text, XStack } from "tamagui";
 
 export type WatchlistTab = "movies" | "tv";
 
@@ -13,21 +12,21 @@ export default function WatchlistTabs({
   onChange,
 }: WatchlistTabsProps) {
   return (
-    <XStack bg="$backgroundElement" p="$1" borderRadius="$4" mb="$4">
-      {(["movies", "tv"] as const).map((tab) => {
+    <XStack gap="$3" ai="center">
+      {(["tv", "movies"] as const).map((tab) => {
         const active = activeTab === tab;
         return (
-          <Button
+          <Text
             key={tab}
-            flex={1}
-            borderRadius="$3"
-            bg={active ? "$background" : "transparent"}
             color="$color"
             opacity={active ? 1 : 0.6}
+            fow={active ? "900" : "700"}
+            fos={active ? "$10" : "$9"}
+            pressStyle={{ opacity: 0.75 }}
             onPress={() => onChange(tab)}
           >
-            {tab === "movies" ? "Movies" : "TV Shows"}
-          </Button>
+            {tab === "movies" ? "Movies" : "Shows"}
+          </Text>
         );
       })}
     </XStack>

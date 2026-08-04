@@ -1,8 +1,7 @@
-import React from "react";
 import { Image } from "expo-image";
 import { Text, XStack, YStack } from "tamagui";
 
-import RatingStars from "./RatingStars";
+import WatchProgressBadge from "./WatchProgressBadge";
 
 import {
   imageUrl,
@@ -13,30 +12,37 @@ import {
 
 interface WatchlistRowProps {
   item: TMDBMedia;
+  subtitle?: string;
+  progress?: number;
+  selected?: boolean;
+  selectionMode?: boolean;
   onOpen: () => void;
-  onRemove: () => void;
 }
 
 export default function WatchlistRow({
   item,
+  subtitle,
+  progress,
+  selected,
+  selectionMode,
   onOpen,
-  onRemove,
 }: WatchlistRowProps) {
   return (
     <XStack
       gap="$3"
-      p="$2"
-      borderRadius="$4"
+      p="$2.5"
+      borderRadius="$5"
       bg="$backgroundElement"
       borderWidth={1}
-      borderColor="$borderColor"
+      borderColor="rgba(255,255,255,0.06)"
       pressStyle={{ opacity: 0.88 }}
       onPress={onOpen}
+      ai="center"
     >
       <YStack
-        w={86}
-        h={126}
-        borderRadius="$3"
+        w={78}
+        h={116}
+        borderRadius={16}
         overflow="hidden"
         bg="$background"
       >
@@ -60,12 +66,40 @@ export default function WatchlistRow({
           <Text color="$color" fow="800" fos="$4" numberOfLines={2}>
             {mediaTitle(item)}
           </Text>
-          <Text color="$color" opacity={0.5} fos="$2" tt="uppercase">
-            {item.media_type || "movie"} {releaseYear(item)}
+          <Text color="$color" opacity={0.5} fos="$2">
+            {subtitle || releaseYear(item) || "Saved to watchlist"}
           </Text>
         </YStack>
-        <XStack ai="center" jc="space-between">
-          <RatingStars value={item.vote_average} />
+
+        <XStack ai="center" jc="space-between" mt="$2">
+          <Text color="$color" opacity={0.42} fos="$2">
+            {(item.media_type || "movie").toUpperCase()}
+          </Text>
+          <XStack ai="center" gap="$2">
+            {typeof progress === "number" ? (
+              <WatchProgressBadge progress={progress} />
+            ) : null}
+            {selectionMode ? (
+              <YStack
+                w={28}
+                h={28}
+                borderRadius={999}
+                ai="center"
+                jc="center"
+                bg={selected ? "$red9" : "transparent"}
+                borderWidth={1}
+                borderColor={selected ? "$red9" : "rgba(255,255,255,0.35)"}
+              >
+                <Text color="$color" fos="$2">
+                  {selected ? "✓" : ""}
+                </Text>
+              </YStack>
+            ) : typeof progress !== "number" ? (
+              <Text color="$color" opacity={0.65} fos="$2">
+                {item.vote_average > 0 ? item.vote_average.toFixed(1) : ""}
+              </Text>
+            ) : null}
+          </XStack>
         </XStack>
       </YStack>
     </XStack>

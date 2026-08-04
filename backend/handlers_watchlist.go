@@ -82,6 +82,7 @@ func handleGetWatchlist(c *gin.Context) {
 			MediaType:    dbItem.MediaType,
 			ReleaseDate:  dbItem.ReleaseDate,
 			FirstAirDate: dbItem.FirstAirDate,
+			CreatedAt:    dbItem.CreatedAt,
 		})
 	}
 

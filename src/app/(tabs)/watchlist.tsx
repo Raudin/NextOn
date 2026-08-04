@@ -1,32 +1,59 @@
-import React, { useCallback, useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
-import { useAuth } from "@/context/AuthContext";
 
-import WatchlistTabs, { type WatchlistTab } from "@/components/Watchlist/WatchlistTabs";
-import WatchlistGroup from "@/components/Watchlist/WatchlistGroup";
-import WatchlistGroupTV from "@/components/Watchlist/WatchlistGroupTV";
+import SearchField from "@/components/SearchField";
+import WatchlistMenu, {
+  type WatchlistLayoutMode,
+  type WatchlistSortMode,
+} from "@/components/Watchlist/WatchlistMenu";
+import WatchlistPosterCard from "@/components/Watchlist/WatchlistPosterCard";
+import WatchlistRow from "@/components/Watchlist/WatchlistRow";
+import WatchlistTabs, {
+  type WatchlistTab,
+} from "@/components/Watchlist/WatchlistTabs";
 
 import {
+  fetchMediaDetails,
+  fetchWatchedStatus,
   fetchWatchlist,
-  removeFromWatchlist,
+  mediaTitle,
+  releaseYear,
   type TMDBMedia,
 } from "@/lib/media-api";
 
+interface ShowProgress {
+  watchedEpisodes: number;
+  totalEpisodes: number;
+  progress: number;
+}
+
 export default function WatchlistScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const { token, isLoading: authLoading } = useAuth();
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<WatchlistTab>("movies");
+  const [activeTab, setActiveTab] = useState<WatchlistTab>("tv");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<WatchlistLayoutMode>("posters");
+  const [sortMode, setSortMode] = useState<WatchlistSortMode>("recent");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showProgress, setShowProgress] = useState<
+    Record<number, ShowProgress>
+  >({});
 
   useEffect(() => {
     if (!authLoading && !token) {
       router.replace("/auth");
     }
-  }, [authLoading, token]);
+  }, [authLoading, router, token]);
 
   const loadWatchlist = useCallback(async () => {
     if (!token) return;
@@ -49,9 +76,151 @@ export default function WatchlistScreen() {
     }, [loadWatchlist, token]),
   );
 
-  const handleFullyWatched = useCallback((id: number) => {
-    setItems((current) => current.filter((item) => item.id !== id));
+  const openDetails = useCallback(
+    (item: TMDBMedia) => {
+      const type = item.media_type || (item.title ? "movie" : "tv");
+      router.push({
+        pathname: "/media/[type]/[id]",
+        params: { type, id: String(item.id) },
+      } as any);
+    },
+    [router],
+  );
+
+  const movies = useMemo(
+    () => items.filter((item) => (item.media_type || "movie") === "movie"),
+    [items],
+  );
+  const shows = useMemo(
+    () => items.filter((item) => item.media_type === "tv"),
+    [items],
+  );
+  const gridGap = 16;
+  const posterWidth = Math.max(
+    96,
+    Math.min(180, Math.floor((width - 32 - gridGap * 2) / 3)),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadShowProgress = async () => {
+      if (shows.length === 0) {
+        setShowProgress({});
+        return;
+      }
+
+      const entries = await Promise.allSettled(
+        shows.map(async (show) => {
+          const [watchedStatus, details] = await Promise.all([
+            fetchWatchedStatus(show.id, "tv"),
+            fetchMediaDetails("tv", show.id),
+          ]);
+
+          const watchedEpisodes = watchedStatus.episodes?.length || 0;
+          const totalEpisodes = (details.seasons || [])
+            .filter((season) => season.season_number >= 1)
+            .reduce((sum, season) => sum + season.episode_count, 0);
+
+          const progress =
+            totalEpisodes > 0 ? watchedEpisodes / totalEpisodes : 0;
+
+          return [
+            show.id,
+            { watchedEpisodes, totalEpisodes, progress },
+          ] as const;
+        }),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      const nextProgress: Record<number, ShowProgress> = {};
+      for (const entry of entries) {
+        if (entry.status === "fulfilled") {
+          const [id, value] = entry.value;
+          nextProgress[id] = value;
+        }
+      }
+
+      setShowProgress(nextProgress);
+    };
+
+    loadShowProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shows]);
+
+  const filteredItems = useMemo(() => {
+    const baseItems = activeTab === "movies" ? movies : shows;
+    const query = searchQuery.trim().toLowerCase();
+
+    const nextItems = query
+      ? baseItems.filter((item) =>
+          mediaTitle(item).toLowerCase().includes(query),
+        )
+      : [...baseItems];
+
+    nextItems.sort((left, right) => {
+      if (sortMode === "alphabetical") {
+        return mediaTitle(left).localeCompare(mediaTitle(right));
+      }
+
+      const leftTime = left.created_at
+        ? new Date(left.created_at).getTime()
+        : 0;
+      const rightTime = right.created_at
+        ? new Date(right.created_at).getTime()
+        : 0;
+
+      if (leftTime !== rightTime) {
+        return rightTime - leftTime;
+      }
+
+      return mediaTitle(left).localeCompare(mediaTitle(right));
+    });
+
+    return nextItems;
+  }, [activeTab, movies, searchQuery, shows, sortMode]);
+
+  const handleItemPress = useCallback(
+    (item: TMDBMedia) => {
+      if (!selectionMode) {
+        openDetails(item);
+        return;
+      }
+
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        if (next.has(item.id)) {
+          next.delete(item.id);
+        } else {
+          next.add(item.id);
+        }
+        return next;
+      });
+    },
+    [openDetails, selectionMode],
+  );
+
+  const toggleSelectionMode = useCallback(() => {
+    setSelectionMode((current) => {
+      if (current) {
+        setSelectedIds(new Set());
+      }
+      return !current;
+    });
   }, []);
+
+  const sectionTitle = searchQuery.trim()
+    ? `Results for "${searchQuery.trim()}"`
+    : "Ready to Watch";
+  const sectionMeta = selectionMode
+    ? `${selectedIds.size} selected`
+    : `${filteredItems.length} items`;
 
   if (authLoading) {
     return (
@@ -65,49 +234,42 @@ export default function WatchlistScreen() {
     return null;
   }
 
-  const removeItem = async (id: number) => {
-    const previous = items;
-    setItems((current) => current.filter((item) => item.id !== id));
-    try {
-      await removeFromWatchlist(id);
-    } catch (err: any) {
-      setItems(previous);
-      setError(err.message || String(err));
-    }
-  };
-
-  const openDetails = (item: TMDBMedia) => {
-    const type = item.media_type || (item.title ? "movie" : "tv");
-    router.push({
-      pathname: "/media/[type]/[id]",
-      params: { type, id: String(item.id) },
-    } as any);
-  };
-
-  const movies = items.filter(
-    (item) => (item.media_type || "movie") === "movie",
-  );
-  const shows = items.filter((item) => item.media_type === "tv");
-
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <YStack f={1} px="$4">
-          <XStack mt="$2" mb="$4" ai="center" jc="space-between">
-            <YStack>
-              <Text fow="900" fos="$9" color="$color">
-                Watchlist
-              </Text>
-              <Text color="$color" opacity={0.5} fos="$2">
-                Movies and shows saved for later
-              </Text>
-            </YStack>
-            <Button size="$3" circular chromeless onPress={loadWatchlist}>
-              ↻
+        <YStack f={1} px="$4" position="relative">
+          <XStack mt="$2" ai="center" jc="space-between">
+            <WatchlistTabs activeTab={activeTab} onChange={setActiveTab} />
+            <Button
+              size="$3"
+              circular
+              bg="$backgroundElement"
+              borderWidth={1}
+              borderColor="rgba(255,255,255,0.06)"
+              onPress={() => setMenuOpen((current) => !current)}
+            >
+              ...
             </Button>
           </XStack>
 
-          <WatchlistTabs activeTab={activeTab} onChange={setActiveTab} />
+          <YStack mt="$3" mb="$4">
+            <SearchField
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={`Search your ${activeTab === "tv" ? "shows" : "movies"}`}
+            />
+          </YStack>
+
+          <WatchlistMenu
+            visible={menuOpen}
+            selectionMode={selectionMode}
+            layoutMode={layoutMode}
+            sortMode={sortMode}
+            onClose={() => setMenuOpen(false)}
+            onToggleSelectionMode={toggleSelectionMode}
+            onLayoutChange={setLayoutMode}
+            onSortChange={setSortMode}
+          />
 
           {loading ? (
             <YStack f={1} ai="center" jc="center" gap="$3">
@@ -137,20 +299,81 @@ export default function WatchlistScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 120 }}
             >
-              {activeTab === "movies" ? (
-                <WatchlistGroup
-                  title="Movies"
-                  items={movies}
-                  onOpen={openDetails}
-                  onRemove={removeItem}
-                />
-              ) : (
-                <WatchlistGroupTV
-                  title="TV Shows"
-                  items={shows}
-                  onFullyWatched={handleFullyWatched}
-                />
-              )}
+              <YStack gap="$3">
+                <XStack ai="center" jc="space-between">
+                  <Text color="$color" fow="900" fos="$8">
+                    {sectionTitle}
+                  </Text>
+                  <Text color="$color" opacity={0.45} fos="$2">
+                    {sectionMeta}
+                  </Text>
+                </XStack>
+
+                {filteredItems.length === 0 ? (
+                  <YStack py="$8">
+                    <Text color="$color" opacity={0.55} ta="center">
+                      {searchQuery.trim()
+                        ? "No saved titles match that search."
+                        : `No ${activeTab === "tv" ? "shows" : "movies"} saved yet.`}
+                    </Text>
+                  </YStack>
+                ) : layoutMode === "posters" ? (
+                  <XStack flexWrap="wrap" gap="$3">
+                    {filteredItems.map((item) => {
+                      const progress =
+                        item.media_type === "tv"
+                          ? showProgress[item.id]?.progress
+                          : undefined;
+                      const subtitle =
+                        item.media_type === "tv"
+                          ? showProgress[item.id]?.totalEpisodes
+                            ? `${showProgress[item.id].watchedEpisodes}/${showProgress[item.id].totalEpisodes} episodes`
+                            : "Tracking progress"
+                          : releaseYear(item) || "Movie";
+
+                      return (
+                        <WatchlistPosterCard
+                          key={`${item.media_type}-${item.id}`}
+                          item={item}
+                          width={posterWidth}
+                          subtitle={subtitle}
+                          progress={progress}
+                          selected={selectedIds.has(item.id)}
+                          selectionMode={selectionMode}
+                          onPress={() => handleItemPress(item)}
+                        />
+                      );
+                    })}
+                  </XStack>
+                ) : (
+                  <YStack gap="$3">
+                    {filteredItems.map((item) => {
+                      const progress =
+                        item.media_type === "tv"
+                          ? showProgress[item.id]?.progress
+                          : undefined;
+                      const subtitle =
+                        item.media_type === "tv"
+                          ? showProgress[item.id]?.totalEpisodes
+                            ? `${showProgress[item.id].watchedEpisodes}/${showProgress[item.id].totalEpisodes} episodes watched`
+                            : "Tracking watch progress"
+                          : releaseYear(item) || "Saved movie";
+
+                      return (
+                        <WatchlistRow
+                          key={`${item.media_type}-${item.id}`}
+                          item={item}
+                          subtitle={subtitle}
+                          progress={progress}
+                          selected={selectedIds.has(item.id)}
+                          selectionMode={selectionMode}
+                          onOpen={() => handleItemPress(item)}
+                        />
+                      );
+                    })}
+                  </YStack>
+                )}
+              </YStack>
             </ScrollView>
           )}
         </YStack>
