@@ -110,6 +110,9 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 				}
 			}
 			detailsVal.Trailers = trailers
+			if len(response.Networks) > 0 {
+				detailsVal.Network = response.Networks[0].Name
+			}
 			details = &detailsVal
 		}
 	}
@@ -267,6 +270,13 @@ func fetchDiscoverData() (*DiscoverResponse, error) {
 		return nil, fmt.Errorf("failed to fetch popular: %w", err)
 	}
 
+	// Fetch Popular TV Series
+	var popularSeries TMDBResponse
+	popularSeriesURL := "https://api.themoviedb.org/3/tv/popular"
+	if err := tmdbGet(popularSeriesURL, apiKey, &popularSeries); err != nil {
+		return nil, fmt.Errorf("failed to fetch popular series: %w", err)
+	}
+
 	// Unify popular list media type to "movie"
 	for i := range popular.Results {
 		if popular.Results[i].MediaType == "" {
@@ -274,8 +284,16 @@ func fetchDiscoverData() (*DiscoverResponse, error) {
 		}
 	}
 
+	// Unify popular series list media type to "tv"
+	for i := range popularSeries.Results {
+		if popularSeries.Results[i].MediaType == "" {
+			popularSeries.Results[i].MediaType = "tv"
+		}
+	}
+
 	return &DiscoverResponse{
-		Trending: trending.Results,
-		Popular:  popular.Results,
+		Trending:      trending.Results,
+		Popular:       popular.Results,
+		PopularSeries: popularSeries.Results,
 	}, nil
 }

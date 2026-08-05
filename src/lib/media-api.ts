@@ -64,6 +64,7 @@ export interface MediaDetails extends TMDBMedia {
   trailers?: MediaVideo[];
   status?: string;
   tagline?: string;
+  network?: string;
 }
 
 export interface Episode {
@@ -102,6 +103,7 @@ export interface WatchedStatusResponse {
 export interface DiscoverResponse {
   trending: TMDBMedia[];
   popular: TMDBMedia[];
+  popular_series: TMDBMedia[];
 }
 
 export interface User {

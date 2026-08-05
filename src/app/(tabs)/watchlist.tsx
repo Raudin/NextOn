@@ -43,8 +43,6 @@ export default function WatchlistScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<WatchlistLayoutMode>("posters");
   const [sortMode, setSortMode] = useState<WatchlistSortMode>("recent");
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showProgress, setShowProgress] = useState<
     Record<number, ShowProgress>
   >({});
@@ -188,39 +186,15 @@ export default function WatchlistScreen() {
 
   const handleItemPress = useCallback(
     (item: TMDBMedia) => {
-      if (!selectionMode) {
-        openDetails(item);
-        return;
-      }
-
-      setSelectedIds((current) => {
-        const next = new Set(current);
-        if (next.has(item.id)) {
-          next.delete(item.id);
-        } else {
-          next.add(item.id);
-        }
-        return next;
-      });
+      openDetails(item);
     },
-    [openDetails, selectionMode],
+    [openDetails],
   );
-
-  const toggleSelectionMode = useCallback(() => {
-    setSelectionMode((current) => {
-      if (current) {
-        setSelectedIds(new Set());
-      }
-      return !current;
-    });
-  }, []);
 
   const sectionTitle = searchQuery.trim()
     ? `Results for "${searchQuery.trim()}"`
     : "Ready to Watch";
-  const sectionMeta = selectionMode
-    ? `${selectedIds.size} selected`
-    : `${filteredItems.length} items`;
+  const sectionMeta = `${filteredItems.length} items`;
 
   if (authLoading) {
     return (
@@ -262,11 +236,9 @@ export default function WatchlistScreen() {
 
           <WatchlistMenu
             visible={menuOpen}
-            selectionMode={selectionMode}
             layoutMode={layoutMode}
             sortMode={sortMode}
             onClose={() => setMenuOpen(false)}
-            onToggleSelectionMode={toggleSelectionMode}
             onLayoutChange={setLayoutMode}
             onSortChange={setSortMode}
           />
@@ -338,8 +310,8 @@ export default function WatchlistScreen() {
                           width={posterWidth}
                           subtitle={subtitle}
                           progress={progress}
-                          selected={selectedIds.has(item.id)}
-                          selectionMode={selectionMode}
+                          selected={false}
+                          selectionMode={false}
                           onPress={() => handleItemPress(item)}
                         />
                       );
@@ -365,8 +337,8 @@ export default function WatchlistScreen() {
                           item={item}
                           subtitle={subtitle}
                           progress={progress}
-                          selected={selectedIds.has(item.id)}
-                          selectionMode={selectionMode}
+                          selected={false}
+                          selectionMode={false}
                           onOpen={() => handleItemPress(item)}
                         />
                       );

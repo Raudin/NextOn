@@ -207,7 +207,8 @@ func handleWatchedStatus(c *gin.Context) {
 }
 
 type tmdbTVSummary struct {
-	NumberOfEpisodes int64 `json:"number_of_episodes"`
+	NumberOfEpisodes int64  `json:"number_of_episodes"`
+	Status           string `json:"status"`
 }
 
 func isWatchlistItemFullyWatched(userID uint, item TMDBMedia) bool {
@@ -231,7 +232,7 @@ func isWatchlistItemFullyWatched(userID uint, item TMDBMedia) bool {
 		return false
 	}
 
-	total, err := fetchTVTotalEpisodes(item.ID)
+	total, status, err := fetchTVTotalEpisodesAndStatus(item.ID)
 	if err != nil || total == 0 {
 		return false
 	}
@@ -242,17 +243,45 @@ func isWatchlistItemFullyWatched(userID uint, item TMDBMedia) bool {
 			watchedCount++
 		}
 	}
-	return int64(watchedCount) >= total
+
+	isFullyWatched := int64(watchedCount) >= total
+	if !isFullyWatched {
+		return false
+	}
+
+	lowerStatus := strings.ToLower(status)
+	if lowerStatus == "ended" || lowerStatus == "canceled" || lowerStatus == "cancelled" {
+		return true
+	}
+
+	return false
 }
 
-func fetchTVTotalEpisodes(seriesID int64) (int64, error) {
+func fetchTVTotalEpisodesAndStatus(seriesID int64) (int64, string, error) {
 	apiKey := os.Getenv("TMDB_API_KEY")
+	if apiKey == "dummy" {
+		details, ok := getMockMediaDetails("tv", seriesID)
+		if !ok {
+			details = getFallbackMediaDetails("tv", seriesID)
+		}
+		var totalEpisodes int64
+		for _, season := range details.Seasons {
+			if season.SeasonNumber >= 1 {
+				totalEpisodes += season.EpisodeCount
+			}
+		}
+		if totalEpisodes == 0 && len(details.Seasons) > 0 {
+			totalEpisodes = details.Seasons[0].EpisodeCount
+		}
+		return totalEpisodes, details.Status, nil
+	}
+
 	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d", seriesID)
 	var summary tmdbTVSummary
 	if err := tmdbGet(url, apiKey, &summary); err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return summary.NumberOfEpisodes, nil
+	return summary.NumberOfEpisodes, summary.Status, nil
 }
 
 func addOrUpdateWatched(userID uint, item WatchedItem) {

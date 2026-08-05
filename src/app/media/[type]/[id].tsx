@@ -127,6 +127,7 @@ export default function MediaDetailScreen() {
   }, [params.type, params.id, isMovie, token]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll();
   }, [loadAll, token]);
 
@@ -184,6 +185,80 @@ export default function MediaDetailScreen() {
     if (!trailer) return;
     const url = `https://www.youtube.com/watch?v=${trailer.key}`;
     Linking.openURL(url);
+  };
+
+  const isSeen = useMemo(() => {
+    if (isMovie) {
+      return watched;
+    }
+    if (!details?.seasons) return false;
+    const totalEpisodes = details.seasons
+      .filter((season) => season.season_number >= 1)
+      .reduce((sum, season) => sum + season.episode_count, 0);
+    return totalEpisodes > 0 && watchedEpisodes.size >= totalEpisodes;
+  }, [isMovie, watched, details, watchedEpisodes]);
+
+  const toggleAllEpisodesWatched = async (markAsSeen: boolean) => {
+    if (!details?.seasons) return;
+    setWatchedLoading(true);
+    try {
+      if (markAsSeen) {
+        const seasonRequests = details.seasons
+          .filter((s) => s.season_number >= 1)
+          .map((s) => fetchSeasonEpisodes(details.id, s.season_number));
+        const responses = await Promise.all(seasonRequests);
+        const allEpisodes = responses.flatMap((r) => r.episodes);
+
+        const payload = allEpisodes.map((ep) => ({
+          media_id: details.id,
+          media_type: "tv" as const,
+          season_number: ep.season_number,
+          episode_number: ep.episode_number,
+        }));
+
+        await markWatchedBulk(payload);
+
+        const nextWatched = new Set<string>();
+        allEpisodes.forEach((ep) =>
+          nextWatched.add(`${ep.season_number}:${ep.episode_number}`)
+        );
+        setWatchedEpisodes(nextWatched);
+      } else {
+        const promises = Array.from(watchedEpisodes).map((key) => {
+          const [season, episode] = key.split(":").map(Number);
+          return unmarkWatched({
+            media_id: details.id,
+            media_type: "tv",
+            season_number: season,
+            episode_number: episode,
+          });
+        });
+        await Promise.allSettled(promises);
+        setWatchedEpisodes(new Set());
+      }
+    } catch (err: any) {
+      setError(err.message || String(err));
+    } finally {
+      setWatchedLoading(false);
+    }
+  };
+
+  const handleWatchlistButtonPress = async () => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
+    if (watchlistLoading || watchedLoading) return;
+
+    if (!inWatchlist) {
+      await toggleWatchlist();
+    } else {
+      if (isMovie) {
+        await toggleWatched();
+      } else {
+        await toggleAllEpisodesWatched(!isSeen);
+      }
+    }
   };
 
   const toggleSeason = async (season: Season) => {
@@ -375,7 +450,7 @@ export default function MediaDetailScreen() {
             contentContainerStyle={{ paddingBottom: 120 }}
           >
             {/* Hero Backdrop */}
-            <YStack h={420} bg="$backgroundElement">
+            <YStack h={420} bg="#151515">
               {details.backdrop_path ? (
                 <Image
                   source={{
@@ -419,10 +494,10 @@ export default function MediaDetailScreen() {
                 </TouchableOpacity>
 
                 {/* Bottom of hero: Status + Logo/Title + Meta + Genres */}
-                <YStack gap="$3">
+                <YStack gap="$3" ai="center" w="100%">
                   {/* Status badge */}
                   {details.status ? (
-                    <XStack>
+                    <XStack jc="center" ai="center">
                       <XStack
                         px="$3"
                         py="$1"
@@ -453,6 +528,7 @@ export default function MediaDetailScreen() {
                       fow="900"
                       fos="$9"
                       numberOfLines={3}
+                      ta="center"
                       style={styles.titleText}
                     >
                       {mediaTitle(details)}
@@ -460,7 +536,7 @@ export default function MediaDetailScreen() {
                   )}
 
                   {/* Genre bullets + runtime/date */}
-                  <XStack ai="center" gap="$2" flexWrap="wrap">
+                  <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" w="100%">
                     {(details.genres ?? []).map((genre, i) => (
                       <XStack key={genre.id} ai="center" gap="$2">
                         {i > 0 && (
@@ -491,62 +567,82 @@ export default function MediaDetailScreen() {
                         </Text>
                       </XStack>
                     ) : null}
+                    {isTv && details.network ? (
+                      <XStack ai="center" gap="$2">
+                        {((details.genres ?? []).length > 0 || runtime) && (
+                          <YStack
+                            w={3}
+                            h={3}
+                            borderRadius={999}
+                            bg="rgba(255,255,255,0.5)"
+                          />
+                        )}
+                        <Text color="white" opacity={0.85} fow="500" fos="$3">
+                          {details.network}
+                        </Text>
+                      </XStack>
+                    ) : null}
+                  </XStack>
+
+                  {/* Action Buttons in Banner */}
+                  <XStack gap="$3" ai="center" jc="center" mt="$2" w="100%">
+                    <Button
+                      f={1}
+                      size="$4"
+                      borderRadius="$10"
+                      bg="transparent"
+                      color="white"
+                      borderWidth={1}
+                      borderColor="rgba(255,255,255,0.4)"
+                      disabled={watchlistLoading || watchedLoading}
+                      onPress={handleWatchlistButtonPress}
+                      iconAfter={(watchlistLoading || watchedLoading) ? <Spinner size="small" color="white" /> : undefined}
+                      h={44}
+                    >
+                      {!inWatchlist ? "+ Watchlist" : isSeen ? "✓ Seen" : "✔ Mark as seen"}
+                    </Button>
+
+                    {trailer ? (
+                      <Button
+                        size="$4"
+                        borderRadius="$10"
+                        bg="rgba(255,255,255,0.15)"
+                        color="white"
+                        fontWeight="700"
+                        borderWidth={1}
+                        borderColor="rgba(255,255,255,0.2)"
+                        onPress={openTrailer}
+                        px="$4"
+                        h={44}
+                      >
+                        ▶ Trailer
+                      </Button>
+                    ) : null}
+
+                    {isMovie && (
+                      <Button
+                        size="$4"
+                        borderRadius="$10"
+                        w={44}
+                        h={44}
+                        bg={watched ? "rgba(255, 50, 50, 0.2)" : "rgba(255,255,255,0.1)"}
+                        borderWidth={1}
+                        borderColor={watched ? "rgba(255, 50, 50, 0.5)" : "rgba(255,255,255,0.2)"}
+                        disabled={watchedLoading}
+                        onPress={toggleWatched}
+                        p="$0"
+                        jc="center"
+                        ai="center"
+                      >
+                        <Text color={watched ? "rgb(255, 80, 80)" : "white"} fos="$5" fow="700">
+                          {watched ? "♥" : "♡"}
+                        </Text>
+                      </Button>
+                    )}
                   </XStack>
                 </YStack>
               </YStack>
             </YStack>
-
-            {/* Action Buttons */}
-            <XStack mt="$4" px="$4" gap="$3">
-              {/* Watchlist button */}
-              <Button
-                f={1}
-                size="$4"
-                borderRadius="$4"
-                bg={inWatchlist ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.1)"}
-                color="white"
-                borderWidth={1}
-                borderColor={inWatchlist ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.2)"}
-                disabled={watchlistLoading}
-                onPress={toggleWatchlist}
-                iconAfter={watchlistLoading ? <Spinner size="small" color="white" /> : undefined}
-              >
-                {inWatchlist ? "✓  In Watchlist" : "+  Watchlist"}
-              </Button>
-
-              {/* Trailer button */}
-              {trailer ? (
-                <Button
-                  size="$4"
-                  borderRadius="$4"
-                  bg="white"
-                  color="black"
-                  fontWeight="700"
-                  onPress={openTrailer}
-                  px="$4"
-                >
-                  ▶  Trailer
-                </Button>
-              ) : null}
-
-              {/* Mark Watched (movie only) */}
-              {isMovie && (
-                <Button
-                  size="$4"
-                  borderRadius={999}
-                  w={48}
-                  h={48}
-                  bg={watched ? "$red9" : "rgba(255,255,255,0.1)"}
-                  borderWidth={1}
-                  borderColor={watched ? "$red9" : "rgba(255,255,255,0.2)"}
-                  disabled={watchedLoading}
-                  onPress={toggleWatched}
-                  p="$0"
-                >
-                  <Text fos="$5">{watched ? "♥" : "♡"}</Text>
-                </Button>
-              )}
-            </XStack>
 
             {/* TV Tab Switcher */}
             {isTv && (
@@ -609,7 +705,7 @@ export default function MediaDetailScreen() {
                     fow="600"
                     fontStyle="italic"
                   >
-                    "{details.tagline}"
+                    &ldquo;{details.tagline}&rdquo;
                   </Text>
                 ) : null}
 
@@ -723,7 +819,7 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 220,
     height: 80,
-    alignSelf: "flex-start",
+    alignSelf: "center",
   },
   titleText: {
     textShadowColor: "rgba(0,0,0,0.8)",
