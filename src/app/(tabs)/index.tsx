@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 
 import ProfileSummary from "@/components/Home/ProfileSummary";
 import UpNextCard from "@/components/Home/UpNextCard";
+import { cache } from "@/lib/cache";
 
 import {
   fetchWatchlist,
@@ -87,6 +88,7 @@ export default function HomeScreen() {
   const [watchlistItems, setWatchlistItems] = useState<TMDBMedia[]>([]);
   const [watchedHistory, setWatchedHistory] = useState<WatchedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -95,40 +97,69 @@ export default function HomeScreen() {
     }
   }, [authLoading, token, router]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     if (!token) return;
-    setLoading(true);
     setError(null);
+
+    const cachedWatchlist = await cache.get<TMDBMedia[]>("home_watchlist_items");
+    const cachedWatched = await cache.get<WatchedItem[]>("home_watched_history");
+
+    if (cachedWatchlist && cachedWatched) {
+      setWatchlistItems(cachedWatchlist);
+      setWatchedHistory(cachedWatched);
+      setLoading(false);
+      setBackgroundRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
       const [watchlist, watched] = await Promise.all([
         fetchWatchlist({ filterWatched: true }),
         fetchWatchedHistory(),
       ]);
+
+      await cache.set("home_watchlist_items", watchlist);
+      await cache.set("home_watched_history", watched);
+
       setWatchlistItems(watchlist);
       setWatchedHistory(watched);
+      setError(null);
     } catch (err: any) {
-      setError(err.message || String(err));
+      if (!cachedWatchlist || !cachedWatched) {
+        setError(err.message || String(err));
+      } else {
+        console.warn("Silent home background revalidation failed:", err);
+      }
     } finally {
       setLoading(false);
+      setBackgroundRefreshing(false);
     }
   }, [token]);
 
   useFocusEffect(
     useCallback(() => {
       if (token) {
-        loadData();
+        loadData(false);
       }
     }, [loadData, token])
   );
 
   const handleFullyWatched = useCallback((id: number) => {
-    setWatchlistItems((current) => current.filter((item) => item.id !== id));
+    setWatchlistItems((current) => {
+      const updated = current.filter((item) => item.id !== id);
+      cache.set("home_watchlist_items", updated).catch(() => {});
+      cache.delete("watchlist_items").catch(() => {});
+      return updated;
+    });
   }, []);
 
   const refreshProfileStats = useCallback(async () => {
     try {
       const watched = await fetchWatchedHistory();
       setWatchedHistory(watched);
+      await cache.set("home_watched_history", watched);
+      await cache.delete("watchlist_items").catch(() => {});
     } catch {
       // ignore non-critical refresh failures
     }
@@ -192,14 +223,19 @@ export default function HomeScreen() {
           {/* Main Section: Up Next */}
           <XStack ai="center" jc="space-between">
             <YStack>
-              <Text fow="900" fos="$7" color="$color">
-                Up Next
-              </Text>
+              <XStack ai="center" gap="$2">
+                <Text fow="900" fos="$7" color="$color">
+                  Up Next
+                </Text>
+                {backgroundRefreshing && (
+                  <Spinner size="small" color="$color" opacity={0.6} />
+                )}
+              </XStack>
               <Text color="$color" opacity={0.5} fos="$2">
                 Continue watching your tracked shows
               </Text>
             </YStack>
-            <Button size="$3" circular chromeless onPress={loadData}>
+            <Button size="$3" circular chromeless onPress={() => loadData(true)}>
               ↻
             </Button>
           </XStack>
@@ -216,7 +252,7 @@ export default function HomeScreen() {
               <Text color="$red10" ta="center" fow="700">
                 {error}
               </Text>
-              <Button onPress={loadData}>Retry</Button>
+              <Button onPress={() => loadData(true)}>Retry</Button>
             </YStack>
           ) : shows.length === 0 ? (
             <YStack f={1} ai="center" jc="center" gap="$3" px="$5">

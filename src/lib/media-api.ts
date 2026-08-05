@@ -184,6 +184,13 @@ export async function apiFetch<T>(
   let lastError = "";
 
   for (const baseUrl of urls) {
+    // If the request was already aborted, exit immediately
+    if (init?.signal?.aborted) {
+      const abortErr = new Error("The operation was aborted.");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
+
     const url = `${baseUrl}${path}`;
     try {
       const headers: Record<string, string> = {
@@ -229,6 +236,19 @@ export async function apiFetch<T>(
       }
       return (await response.json()) as T;
     } catch (error: any) {
+      const isAbort =
+        error?.name === "AbortError" ||
+        error?.name === "CanceledError" ||
+        init?.signal?.aborted ||
+        error?.message?.toLowerCase().includes("aborted") ||
+        error?.message?.toLowerCase().includes("cancel");
+
+      if (isAbort) {
+        const abortErr = new Error(error?.message || "The operation was aborted.");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
+
       lastError = error.message || String(error);
       console.warn(`[API] Failed (${url}): ${lastError}`);
     }

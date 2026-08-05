@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, YStack } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
+import { cache } from "@/lib/cache";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
@@ -14,6 +15,20 @@ import {
   unmarkWatched,
   type Episode,
 } from "@/lib/media-api";
+
+const invalidateMediaCaches = async () => {
+  try {
+    await Promise.all([
+      cache.delete("watchlist_items"),
+      cache.delete("watchlist_show_progress"),
+      cache.delete("home_watchlist_items"),
+      cache.delete("home_watched_history"),
+      cache.delete("discover_watchlist_ids"),
+    ]);
+  } catch (err) {
+    console.warn("Failed to invalidate media caches:", err);
+  }
+};
 
 export default function EpisodeDetailScreen() {
   const router = useRouter();
@@ -107,6 +122,7 @@ export default function EpisodeDetailScreen() {
       } else {
         await unmarkWatched(payload);
       }
+      await invalidateMediaCaches();
     } catch (err: any) {
       setWatched(!next);
       setError(err.message || String(err));

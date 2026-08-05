@@ -15,6 +15,7 @@ import WatchlistRow from "@/components/Watchlist/WatchlistRow";
 import WatchlistTabs, {
   type WatchlistTab,
 } from "@/components/Watchlist/WatchlistTabs";
+import { cache } from "@/lib/cache";
 
 import {
   fetchMediaDetails,
@@ -37,6 +38,7 @@ export default function WatchlistScreen() {
   const { token, isLoading: authLoading } = useAuth();
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WatchlistTab>("tv");
   const [searchQuery, setSearchQuery] = useState("");
@@ -53,23 +55,45 @@ export default function WatchlistScreen() {
     }
   }, [authLoading, router, token]);
 
-  const loadWatchlist = useCallback(async () => {
+  const loadWatchlist = useCallback(async (forceRefresh = false) => {
     if (!token) return;
-    setLoading(true);
     setError(null);
+
+    const cachedItems = await cache.get<TMDBMedia[]>("watchlist_items");
+    const cachedProgress = await cache.get<Record<number, ShowProgress>>("watchlist_show_progress");
+
+    if (cachedItems) {
+      setItems(cachedItems);
+      if (cachedProgress) {
+        setShowProgress(cachedProgress);
+      }
+      setLoading(false);
+      setBackgroundRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      setItems(await fetchWatchlist({ filterWatched: true }));
+      const fetchedItems = await fetchWatchlist({ filterWatched: true });
+      await cache.set("watchlist_items", fetchedItems);
+      setItems(fetchedItems);
+      setError(null);
     } catch (err: any) {
-      setError(err.message || String(err));
+      if (!cachedItems) {
+        setError(err.message || String(err));
+      } else {
+        console.warn("Silent watchlist background revalidation failed:", err);
+      }
     } finally {
       setLoading(false);
+      setBackgroundRefreshing(false);
     }
   }, [token]);
 
   useFocusEffect(
     useCallback(() => {
       if (token) {
-        loadWatchlist();
+        loadWatchlist(false);
       }
     }, [loadWatchlist, token]),
   );
@@ -142,6 +166,7 @@ export default function WatchlistScreen() {
         }
       }
 
+      await cache.set("watchlist_show_progress", nextProgress);
       setShowProgress(nextProgress);
     };
 
@@ -213,17 +238,34 @@ export default function WatchlistScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
         <YStack f={1} px="$4" position="relative">
           <XStack mt="$2" ai="center" jc="space-between">
-            <WatchlistTabs activeTab={activeTab} onChange={setActiveTab} />
-            <Button
-              size="$3"
-              circular
-              bg="$backgroundElement"
-              borderWidth={1}
-              borderColor="rgba(255,255,255,0.06)"
-              onPress={() => setMenuOpen((current) => !current)}
-            >
-              ...
-            </Button>
+            <XStack ai="center" gap="$2">
+              <WatchlistTabs activeTab={activeTab} onChange={setActiveTab} />
+              {backgroundRefreshing && (
+                <Spinner size="small" color="$color" opacity={0.6} />
+              )}
+            </XStack>
+            <XStack gap="$2" ai="center">
+              <Button
+                size="$3"
+                circular
+                bg="$backgroundElement"
+                borderWidth={1}
+                borderColor="rgba(255,255,255,0.06)"
+                onPress={() => loadWatchlist(true)}
+              >
+                ↻
+              </Button>
+              <Button
+                size="$3"
+                circular
+                bg="$backgroundElement"
+                borderWidth={1}
+                borderColor="rgba(255,255,255,0.06)"
+                onPress={() => setMenuOpen((current) => !current)}
+              >
+                ...
+              </Button>
+            </XStack>
           </XStack>
 
           <YStack mt="$3" mb="$4">
@@ -255,7 +297,7 @@ export default function WatchlistScreen() {
               <Text color="$red10" ta="center" fow="700">
                 {error}
               </Text>
-              <Button onPress={loadWatchlist}>Retry</Button>
+              <Button onPress={() => loadWatchlist(true)}>Retry</Button>
             </YStack>
           ) : items.length === 0 ? (
             <YStack f={1} ai="center" jc="center" gap="$2" px="$5">
@@ -305,7 +347,7 @@ export default function WatchlistScreen() {
 
                       return (
                         <WatchlistPosterCard
-                          key={`${item.media_type}-${item.id}`}
+                          key={`${item.media_type || "media"}-${item.id}`}
                           item={item}
                           width={posterWidth}
                           subtitle={subtitle}
@@ -333,7 +375,7 @@ export default function WatchlistScreen() {
 
                       return (
                         <WatchlistRow
-                          key={`${item.media_type}-${item.id}`}
+                          key={`${item.media_type || "media"}-${item.id}`}
                           item={item}
                           subtitle={subtitle}
                           progress={progress}
