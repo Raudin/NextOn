@@ -256,6 +256,14 @@ export default function DiscoverScreen() {
                     onOpen={openDetails}
                     onToggle={toggleWatchlist}
                   />
+                  <MediaCarousel
+                    title="Popular Series"
+                    items={data?.popular_series ?? []}
+                    wide
+                    watchlistIds={watchlistIds}
+                    onOpen={openDetails}
+                    onToggle={toggleWatchlist}
+                  />
                 </>
               )}
             </ScrollView>

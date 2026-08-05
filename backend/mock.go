@@ -103,9 +103,31 @@ func getMockDiscoverData() *DiscoverResponse {
 		},
 	}
 
+	popularSeries := []TMDBMedia{
+		{
+			ID:           135397,
+			Name:         "Squid Game",
+			PosterPath:   "/1xsGGB446l59er765XvFWfhVxK.jpg",
+			BackdropPath: "/yg0ihCPPn0Zc7x570hCkiR3rSp5.jpg",
+			VoteAverage:  7.9,
+			MediaType:    "tv",
+			FirstAirDate: "2021-09-17",
+		},
+		{
+			ID:           119051,
+			Name:         "Wednesday",
+			PosterPath:   "/9PFw32r216Teg3LgolnACz7VAat.jpg",
+			BackdropPath: "/iHjx1zR12948yR9Vsc4Z648wv2u.jpg",
+			VoteAverage:  8.0,
+			MediaType:    "tv",
+			FirstAirDate: "2022-11-23",
+		},
+	}
+
 	return &DiscoverResponse{
-		Trending: trending,
-		Popular:  popular,
+		Trending:      trending,
+		Popular:       popular,
+		PopularSeries: popularSeries,
 	}
 }
 
@@ -245,6 +267,8 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				{ID: 3194501, Name: "Jung Ho-yeon", ProfilePath: "/4GxPdr4tP2FwwiO7kY6r1M8vW6h.jpg"},
 				{ID: 65240, Name: "Lee Byung-hun", ProfilePath: "/zLwUqbyzJg1x3yTMSx3o2EusQkA.jpg"},
 			},
+			Status:  "Returning Series",
+			Network: "Netflix",
 		},
 		402431: {
 			TMDBMedia: TMDBMedia{
@@ -287,6 +311,8 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				{ID: 1245, Name: "Catherine Zeta-Jones", ProfilePath: "/hWK9yghUnL0wA5ZDx4wvAZhU4DT.jpg"},
 				{ID: 91804, Name: "Luis Guzman", ProfilePath: "/1n5vWyU6nF48Zxrp9RzcrwB3V4H.jpg"},
 			},
+			Status:  "Returning Series",
+			Network: "Netflix",
 		},
 		1022789: {
 			TMDBMedia: TMDBMedia{

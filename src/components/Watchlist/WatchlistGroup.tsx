@@ -10,14 +10,12 @@ interface WatchlistGroupProps {
   title: string;
   items: TMDBMedia[];
   onOpen: (item: TMDBMedia) => void;
-  onRemove: (id: number) => void;
 }
 
 export default function WatchlistGroup({
   title,
   items,
   onOpen,
-  onRemove,
 }: WatchlistGroupProps) {
   return (
     <YStack gap="$3">
@@ -39,7 +37,6 @@ export default function WatchlistGroup({
               key={`${item.media_type}-${item.id}`}
               item={item}
               onOpen={() => onOpen(item)}
-              onRemove={() => onRemove(item.id)}
             />
           ))}
         </YStack>

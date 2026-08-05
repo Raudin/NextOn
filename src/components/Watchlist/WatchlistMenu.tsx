@@ -1,4 +1,4 @@
-import { Pressable } from "react-native";
+import { Pressable, useColorScheme } from "react-native";
 import { Text, XStack, YStack } from "tamagui";
 
 export type WatchlistLayoutMode = "posters" | "list";
@@ -6,11 +6,9 @@ export type WatchlistSortMode = "recent" | "alphabetical";
 
 interface WatchlistMenuProps {
   visible: boolean;
-  selectionMode: boolean;
   layoutMode: WatchlistLayoutMode;
   sortMode: WatchlistSortMode;
   onClose: () => void;
-  onToggleSelectionMode: () => void;
   onLayoutChange: (mode: WatchlistLayoutMode) => void;
   onSortChange: (mode: WatchlistSortMode) => void;
 }
@@ -18,10 +16,12 @@ interface WatchlistMenuProps {
 interface MenuItemProps {
   label: string;
   active?: boolean;
+  textColor: string;
+  activeBg: string;
   onPress: () => void;
 }
 
-function MenuItem({ label, active, onPress }: MenuItemProps) {
+function MenuItem({ label, active, textColor, activeBg, onPress }: MenuItemProps) {
   return (
     <XStack
       ai="center"
@@ -29,14 +29,14 @@ function MenuItem({ label, active, onPress }: MenuItemProps) {
       px="$3"
       py="$2.5"
       borderRadius="$3"
-      bg={active ? "$backgroundHover" : "transparent"}
+      bg={active ? activeBg : "transparent"}
       pressStyle={{ opacity: 0.8 }}
       onPress={onPress}
     >
-      <Text color="$color" fos="$3" fow={active ? "700" : "500"}>
+      <Text color={textColor} fos="$3" fow={active ? "700" : "500"}>
         {label}
       </Text>
-      <Text color="$color" opacity={active ? 1 : 0}>
+      <Text color={textColor} opacity={active ? 1 : 0}>
         ✓
       </Text>
     </XStack>
@@ -45,17 +45,23 @@ function MenuItem({ label, active, onPress }: MenuItemProps) {
 
 export default function WatchlistMenu({
   visible,
-  selectionMode,
   layoutMode,
   sortMode,
   onClose,
-  onToggleSelectionMode,
   onLayoutChange,
   onSortChange,
 }: WatchlistMenuProps) {
+  const scheme = useColorScheme();
+  const isDark = scheme === "dark";
+
   if (!visible) {
     return null;
   }
+
+  const bg = isDark ? "rgba(20, 20, 20, 0.75)" : "rgba(255, 255, 255, 0.75)";
+  const borderColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.12)";
+  const textColor = isDark ? "white" : "black";
+  const itemActiveBg = isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)";
 
   return (
     <>
@@ -80,28 +86,21 @@ export default function WatchlistMenu({
         p="$2"
         gap="$1"
         borderRadius="$5"
-        bg="$background"
-        borderWidth={1}
-        borderColor="$borderColor"
+        style={{
+          backgroundColor: bg,
+          borderWidth: 1,
+          borderColor: borderColor,
+        }}
         shadowColor="#000"
         shadowOpacity={0.32}
         shadowRadius={14}
         shadowOffset={{ width: 0, height: 8 }}
       >
         <MenuItem
-          label="Select"
-          active={selectionMode}
-          onPress={() => {
-            onToggleSelectionMode();
-            onClose();
-          }}
-        />
-
-        <YStack h={1} bg="$borderColor" my="$1" />
-
-        <MenuItem
           label="Posters"
           active={layoutMode === "posters"}
+          textColor={textColor}
+          activeBg={itemActiveBg}
           onPress={() => {
             onLayoutChange("posters");
             onClose();
@@ -110,17 +109,21 @@ export default function WatchlistMenu({
         <MenuItem
           label="List"
           active={layoutMode === "list"}
+          textColor={textColor}
+          activeBg={itemActiveBg}
           onPress={() => {
             onLayoutChange("list");
             onClose();
           }}
         />
 
-        <YStack h={1} bg="$borderColor" my="$1" />
+        <YStack h={1} style={{ backgroundColor: borderColor }} my="$1" />
 
         <MenuItem
           label="Recently added"
           active={sortMode === "recent"}
+          textColor={textColor}
+          activeBg={itemActiveBg}
           onPress={() => {
             onSortChange("recent");
             onClose();
@@ -129,6 +132,8 @@ export default function WatchlistMenu({
         <MenuItem
           label="Alphabetical"
           active={sortMode === "alphabetical"}
+          textColor={textColor}
+          activeBg={itemActiveBg}
           onPress={() => {
             onSortChange("alphabetical");
             onClose();

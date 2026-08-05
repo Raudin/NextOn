@@ -60,6 +60,11 @@ type Genre struct {
 	Name string `json:"name"`
 }
 
+type Network struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
 type CastMember struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
@@ -121,6 +126,7 @@ type MediaDetails struct {
 	Trailers        []Video      `json:"trailers,omitempty"`
 	Status          string       `json:"status,omitempty"`
 	Tagline         string       `json:"tagline,omitempty"`
+	Network         string       `json:"network,omitempty"`
 }
 
 type tmdbCredits struct {
@@ -137,9 +143,10 @@ type tmdbVideosResult struct {
 
 type tmdbMediaDetailsResponse struct {
 	MediaDetails
-	Credits tmdbCredits        `json:"credits"`
-	Images  tmdbImagesResponse `json:"images"`
-	Videos  tmdbVideosResult   `json:"videos"`
+	Credits  tmdbCredits        `json:"credits"`
+	Images   tmdbImagesResponse `json:"images"`
+	Videos   tmdbVideosResult   `json:"videos"`
+	Networks []Network          `json:"networks"`
 }
 
 // TMDBResponse matches the list response from TMDB endpoints
@@ -150,8 +157,9 @@ type TMDBResponse struct {
 
 // DiscoverResponse is the clean, combined object returned to the frontend
 type DiscoverResponse struct {
-	Trending []TMDBMedia `json:"trending"`
-	Popular  []TMDBMedia `json:"popular"`
+	Trending      []TMDBMedia `json:"trending"`
+	Popular       []TMDBMedia `json:"popular"`
+	PopularSeries []TMDBMedia `json:"popular_series"`
 }
 
 // Cache holds the cached DiscoverResponse and its expiration time
