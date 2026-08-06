@@ -5,6 +5,7 @@ import { Alert, Linking, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
+import { cache } from "@/lib/cache";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
@@ -26,6 +27,20 @@ import {
   type MediaDetails,
   type Season,
 } from "@/lib/media-api";
+
+const invalidateMediaCaches = async () => {
+  try {
+    await Promise.all([
+      cache.delete("watchlist_items"),
+      cache.delete("watchlist_show_progress"),
+      cache.delete("home_watchlist_items"),
+      cache.delete("home_watched_history"),
+      cache.delete("discover_watchlist_ids"),
+    ]);
+  } catch (err) {
+    console.warn("Failed to invalidate media caches:", err);
+  }
+};
 
 export default function MediaDetailScreen() {
   const router = useRouter();
@@ -148,6 +163,7 @@ export default function MediaDetailScreen() {
       } else {
         await removeFromWatchlist(details.id);
       }
+      await invalidateMediaCaches();
     } catch (err: any) {
       setInWatchlist(!next);
       setError(err.message || String(err));
@@ -173,6 +189,7 @@ export default function MediaDetailScreen() {
       } else {
         await unmarkWatched({ media_id: details.id, media_type: "movie" });
       }
+      await invalidateMediaCaches();
     } catch (err: any) {
       setWatched(!next);
       setError(err.message || String(err));
@@ -223,6 +240,7 @@ export default function MediaDetailScreen() {
           nextWatched.add(`${ep.season_number}:${ep.episode_number}`)
         );
         setWatchedEpisodes(nextWatched);
+        await invalidateMediaCaches();
       } else {
         const promises = Array.from(watchedEpisodes).map((key) => {
           const [season, episode] = key.split(":").map(Number);
@@ -235,6 +253,7 @@ export default function MediaDetailScreen() {
         });
         await Promise.allSettled(promises);
         setWatchedEpisodes(new Set());
+        await invalidateMediaCaches();
       }
     } catch (err: any) {
       setError(err.message || String(err));
@@ -324,6 +343,7 @@ export default function MediaDetailScreen() {
         });
         try {
           await unmarkWatched(payload);
+          await invalidateMediaCaches();
         } catch (err: any) {
           setWatchedEpisodes((prev) => {
             const next = new Set(prev);
@@ -340,6 +360,7 @@ export default function MediaDetailScreen() {
         });
         try {
           await markWatched(payload);
+          await invalidateMediaCaches();
         } catch (err: any) {
           setWatchedEpisodes((prev) => {
             const next = new Set(prev);
@@ -393,6 +414,7 @@ export default function MediaDetailScreen() {
             setWatchedEpisodes(next);
             try {
               await markWatchedBulk(payload);
+              await invalidateMediaCaches();
             } catch (err: any) {
               setError(err.message || String(err));
               loadAll();

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { setApiToken, loginUser, signupUser, type User } from "@/lib/media-api";
+import { cache } from "@/lib/cache";
 
 interface AuthContextType {
   token: string | null;
@@ -136,6 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setApiToken(null);
     await storage.deleteItem(TOKEN_KEY);
     await storage.deleteItem(USER_KEY);
+    await cache.clearAll();
   }, []);
 
   return (

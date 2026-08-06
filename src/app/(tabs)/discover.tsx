@@ -8,6 +8,7 @@ import MediaCarousel from "@/components/Discover/MediaCarousel";
 import SearchRow from "@/components/Discover/SearchRow";
 import EmptyState from "@/components/EmptyState";
 import SearchField from "@/components/SearchField";
+import { cache } from "@/lib/cache";
 
 import {
   addToWatchlist,
@@ -24,6 +25,7 @@ export default function DiscoverScreen() {
   const { token } = useAuth();
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -32,44 +34,75 @@ export default function DiscoverScreen() {
 
   const hasQuery = searchQuery.trim().length > 0;
 
-  const loadDiscover = React.useCallback(async () => {
-    setLoading(true);
+  const loadDiscover = React.useCallback(async (forceRefresh = false) => {
     setError(null);
+    const cachedData = await cache.get<DiscoverResponse>("discover_data");
+    const cachedWatchlistIds = await cache.get<number[]>("discover_watchlist_ids");
+
+    if (cachedData) {
+      setData(cachedData);
+      if (cachedWatchlistIds) {
+        setWatchlistIds(new Set(cachedWatchlistIds));
+      }
+      setLoading(false);
+      setBackgroundRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
+      let discover: DiscoverResponse;
+      let watchlistIdsArr: number[] = [];
+
       if (token) {
-        const [discover, watchlist] = await Promise.all([
+        const [disc, wl] = await Promise.all([
           fetchDiscover(),
           fetchWatchlist(),
         ]);
-        setData(discover);
-        setWatchlistIds(new Set(watchlist.map((item) => item.id)));
+        discover = disc;
+        watchlistIdsArr = wl.map((item) => item.id);
       } else {
-        const discover = await fetchDiscover();
-        setData(discover);
-        setWatchlistIds(new Set());
+        discover = await fetchDiscover();
       }
+
+      // 2 hours TTL for discover cache
+      const TTL_2_HOURS = 2 * 60 * 60 * 1000;
+      await cache.set("discover_data", discover, TTL_2_HOURS);
+      if (token) {
+        await cache.set("discover_watchlist_ids", watchlistIdsArr, TTL_2_HOURS);
+      }
+
+      setData(discover);
+      setWatchlistIds(new Set(watchlistIdsArr));
+      setError(null);
     } catch (err: any) {
-      setError(
-        `${err.message || String(err)}. Make sure the Go server is running on port 8080.`,
-      );
+      // Only show full screen error if we don't have cached data to show
+      if (!cachedData) {
+        setError(
+          `${err.message || String(err)}. Make sure the Go server is running on port 8080.`,
+        );
+      } else {
+        console.warn("Silent discover background revalidation failed:", err);
+      }
     } finally {
       setLoading(false);
+      setBackgroundRefreshing(false);
     }
   }, [token]);
 
   useFocusEffect(
     React.useCallback(() => {
-      loadDiscover();
+      loadDiscover(false);
     }, [loadDiscover]),
   );
 
   useEffect(() => {
     const query = searchQuery.trim();
     if (!query) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSearchResults([]);
-
-      setSearching(false);
+      setTimeout(() => {
+        setSearchResults([]);
+        setSearching(false);
+      }, 0);
       return;
     }
 
@@ -80,7 +113,13 @@ export default function DiscoverScreen() {
         const results = await searchMedia(query, controller.signal);
         setSearchResults(results);
       } catch (err: any) {
-        if (err.name !== "AbortError") {
+        const isAbort =
+          err.name === "AbortError" ||
+          err.name === "CanceledError" ||
+          err.message?.toLowerCase().includes("aborted") ||
+          err.message?.toLowerCase().includes("cancel");
+
+        if (!isAbort) {
           setError(err.message || String(err));
         }
       } finally {
@@ -100,15 +139,14 @@ export default function DiscoverScreen() {
       return;
     }
     const exists = watchlistIds.has(item.id);
-    setWatchlistIds((current) => {
-      const next = new Set(current);
-      if (exists) {
-        next.delete(item.id);
-      } else {
-        next.add(item.id);
-      }
-      return next;
-    });
+    const updatedIds = new Set(watchlistIds);
+    if (exists) {
+      updatedIds.delete(item.id);
+    } else {
+      updatedIds.add(item.id);
+    }
+    setWatchlistIds(updatedIds);
+    await cache.set("discover_watchlist_ids", Array.from(updatedIds));
 
     try {
       if (exists) {
@@ -116,16 +154,14 @@ export default function DiscoverScreen() {
       } else {
         await addToWatchlist(item);
       }
+      // Invalidate dependent caches
+      await cache.delete("watchlist_items");
+      await cache.delete("home_data");
     } catch {
-      setWatchlistIds((current) => {
-        const next = new Set(current);
-        if (exists) {
-          next.add(item.id);
-        } else {
-          next.delete(item.id);
-        }
-        return next;
-      });
+      // Revert on error
+      const revertedIds = new Set(watchlistIds);
+      setWatchlistIds(revertedIds);
+      await cache.set("discover_watchlist_ids", Array.from(revertedIds));
     }
   };
 
@@ -155,15 +191,20 @@ export default function DiscoverScreen() {
           <YStack mt="$2" mb="$3">
             <XStack ai="center" jc="space-between">
               <YStack f={1}>
-                <Text color="$color" fow="900" fos="$9">
-                  Discover
-                </Text>
+                <XStack ai="center" gap="$2">
+                  <Text color="$color" fow="900" fos="$9">
+                    Discover
+                  </Text>
+                  {backgroundRefreshing && (
+                    <Spinner size="small" color="$color" opacity={0.6} />
+                  )}
+                </XStack>
                 <Text color="$color" opacity={0.5} fos="$2">
                   Find your next favourite movie or show
                 </Text>
               </YStack>
               {!loading && (
-                <Button size="$3" circular chromeless onPress={loadDiscover}>
+                <Button size="$3" circular chromeless onPress={() => loadDiscover(true)}>
                   ↻
                 </Button>
               )}
@@ -192,7 +233,7 @@ export default function DiscoverScreen() {
               <Text color="$red10" fow="600" ta="center" fos="$4">
                 {error}
               </Text>
-              <Button onPress={loadDiscover} size="$4" borderRadius="$4">
+              <Button onPress={() => loadDiscover(true)} size="$4" borderRadius="$4">
                 Retry
               </Button>
             </YStack>
@@ -229,7 +270,7 @@ export default function DiscoverScreen() {
                     <YStack gap="$3">
                       {uniqueSearchResults.map((item) => (
                         <SearchRow
-                          key={`${item.media_type}-${item.id}`}
+                          key={`${item.media_type || "media"}-${item.id}`}
                           item={item}
                           added={watchlistIds.has(item.id)}
                           onPress={() => openDetails(item)}

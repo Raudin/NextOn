@@ -13,6 +13,7 @@ import { useAuth } from "@/context/AuthContext";
 import ProfileHeader from "@/components/Profile/ProfileHeader";
 import StatsGrid from "@/components/Profile/StatsGrid";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
+import { cache } from "@/lib/cache";
 
 import {
   fetchUserProfile,
@@ -154,6 +155,13 @@ export default function ProfileScreen() {
       async () => {
         try {
           await clearWatchHistory();
+          // Invalidate affected caches
+          await Promise.all([
+            cache.delete("home_watchlist_items"),
+            cache.delete("home_watched_history"),
+            cache.delete("watchlist_items"),
+            cache.delete("watchlist_show_progress"),
+          ]).catch(() => {});
           loadProfile();
         } catch (err: any) {
           setError(err.message || "Failed to clear watch history.");
