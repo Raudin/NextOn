@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Linking, StyleSheet, TouchableOpacity } from "react-native";
+import { Alert, Linking, Modal, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
@@ -19,13 +19,11 @@ import {
   imageUrl,
   markWatched,
   markWatchedBulk,
-  mediaDate,
   mediaTitle,
   removeFromWatchlist,
   unmarkWatched,
   type Episode,
   type MediaDetails,
-  type Season,
 } from "@/lib/media-api";
 
 const invalidateMediaCaches = async () => {
@@ -56,9 +54,8 @@ export default function MediaDetailScreen() {
   const [activeTab, setActiveTab] = useState<"overview" | "episodes">(
     "overview",
   );
-  const [expandedSeasons, setExpandedSeasons] = useState<Set<number>>(
-    new Set(),
-  );
+  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<number | null>(null);
+  const [pickerVisible, setPickerVisible] = useState(false);
   const [seasonEpisodes, setSeasonEpisodes] = useState<
     Record<number, Episode[]>
   >({});
@@ -110,13 +107,14 @@ export default function MediaDetailScreen() {
     setLoading(true);
     setError(null);
     try {
+      let detailsData: MediaDetails;
       if (token) {
-        const [detailsData, watchlist, watchedStatus] = await Promise.all([
+        const [detailsResult, watchlist, watchedStatus] = await Promise.all([
           fetchMediaDetails(params.type, params.id),
           fetchWatchlist(),
           fetchWatchedStatus(params.id, params.type),
         ]);
-        setDetails(detailsData);
+        detailsData = detailsResult;
         setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
         if (isMovie) {
           setWatched(watchedStatus.watched ?? false);
@@ -128,11 +126,21 @@ export default function MediaDetailScreen() {
           setWatchedEpisodes(next);
         }
       } else {
-        const detailsData = await fetchMediaDetails(params.type, params.id);
-        setDetails(detailsData);
+        detailsData = await fetchMediaDetails(params.type, params.id);
         setInWatchlist(false);
         setWatched(false);
         setWatchedEpisodes(new Set());
+      }
+
+      setDetails(detailsData);
+
+      if (params.type === "tv" && detailsData.seasons && detailsData.seasons.length > 0) {
+        const firstSeason = detailsData.seasons.find((s) => s.season_number >= 1) || detailsData.seasons[0];
+        if (firstSeason) {
+          setSelectedSeasonNumber(firstSeason.season_number);
+          const data = await fetchSeasonEpisodes(params.id, firstSeason.season_number);
+          setSeasonEpisodes((prev) => ({ ...prev, [firstSeason.season_number]: data.episodes }));
+        }
       }
     } catch (err: any) {
       setError(err.message || String(err));
@@ -145,6 +153,25 @@ export default function MediaDetailScreen() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll();
   }, [loadAll, token]);
+
+  const loadSeasonEpisodes = useCallback(async (seasonNumber: number) => {
+    if (seasonEpisodes[seasonNumber] || seasonLoading.has(seasonNumber)) {
+      return;
+    }
+    setSeasonLoading((prev) => new Set(prev).add(seasonNumber));
+    try {
+      const data = await fetchSeasonEpisodes(params.id, seasonNumber);
+      setSeasonEpisodes((prev) => ({ ...prev, [seasonNumber]: data.episodes }));
+    } catch (err: any) {
+      setError(err.message || String(err));
+    } finally {
+      setSeasonLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(seasonNumber);
+        return next;
+      });
+    }
+  }, [params.id, seasonEpisodes, seasonLoading]);
 
   const toggleWatchlist = async () => {
     if (!token) {
@@ -277,37 +304,6 @@ export default function MediaDetailScreen() {
       } else {
         await toggleAllEpisodesWatched(!isSeen);
       }
-    }
-  };
-
-  const toggleSeason = async (season: Season) => {
-    const seasonNumber = season.season_number;
-    setExpandedSeasons((prev) => {
-      const next = new Set(prev);
-      if (next.has(seasonNumber)) {
-        next.delete(seasonNumber);
-      } else {
-        next.add(seasonNumber);
-      }
-      return next;
-    });
-
-    if (seasonEpisodes[seasonNumber] || seasonLoading.has(seasonNumber)) {
-      return;
-    }
-
-    setSeasonLoading((prev) => new Set(prev).add(seasonNumber));
-    try {
-      const data = await fetchSeasonEpisodes(params.id, seasonNumber);
-      setSeasonEpisodes((prev) => ({ ...prev, [seasonNumber]: data.episodes }));
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setSeasonLoading((prev) => {
-        const next = new Set(prev);
-        next.delete(seasonNumber);
-        return next;
-      });
     }
   };
 
@@ -698,23 +694,61 @@ export default function MediaDetailScreen() {
               </XStack>
             )}
 
-            {isTv && activeTab === "episodes" ? (
+            {isTv && activeTab === "episodes" && selectedSeasonNumber !== null ? (
               <YStack px="$4" pt="$5" gap="$4">
-                {details.seasons?.map((season) => (
-                  <SeasonCard
-                    key={season.id}
-                    season={season}
-                    expanded={expandedSeasons.has(season.season_number)}
-                    loading={seasonLoading.has(season.season_number)}
-                    episodes={seasonEpisodes[season.season_number] ?? []}
-                    watchedEpisodes={watchedEpisodes}
-                    onToggle={() => toggleSeason(season)}
-                    onToggleEpisode={(episode, list) =>
-                      toggleEpisode(episode, list)
-                    }
-                    onOpenEpisode={openEpisode}
-                  />
-                ))}
+                {/* Season Selection Row */}
+                <XStack ai="center" jc="space-between" pb="$2">
+                  <TouchableOpacity onPress={() => setPickerVisible(true)} activeOpacity={0.7}>
+                    <XStack ai="center" gap="$2">
+                      <Text color="$color" fow="800" fos="$6">
+                        {details.seasons?.find((s) => s.season_number === selectedSeasonNumber)?.name || `Season ${selectedSeasonNumber}`}
+                      </Text>
+                      <Text color="$color" opacity={0.6} fos="$5">
+                        ↕
+                      </Text>
+                    </XStack>
+                  </TouchableOpacity>
+                  <Text color="$color" opacity={0.5} fos="$4">
+                    {details.seasons?.find((s) => s.season_number === selectedSeasonNumber)?.episode_count || 0} episodes
+                  </Text>
+                </XStack>
+
+                {/* Episode Rows List */}
+                {seasonLoading.has(selectedSeasonNumber) ? (
+                  <YStack py="$6" ai="center" jc="center" gap="$3">
+                    <Spinner size="large" color="$color" />
+                    <Text color="$color" opacity={0.55}>
+                      Loading episodes...
+                    </Text>
+                  </YStack>
+                ) : (seasonEpisodes[selectedSeasonNumber] ?? []).length === 0 ? (
+                  <YStack py="$6" ai="center">
+                    <Text color="$color" opacity={0.5}>
+                      No episodes available.
+                    </Text>
+                  </YStack>
+                ) : (
+                  <YStack gap="$0">
+                    {(seasonEpisodes[selectedSeasonNumber] ?? []).map((episode, i) => {
+                      const isLast = i === (seasonEpisodes[selectedSeasonNumber] ?? []).length - 1;
+                      return (
+                        <EpisodeRowListItem
+                          key={episode.id}
+                          episode={episode}
+                          showDetails={details}
+                          watched={watchedEpisodes.has(
+                            `${episode.season_number}:${episode.episode_number}`,
+                          )}
+                          isLast={isLast}
+                          onPress={() => openEpisode(episode)}
+                          onToggle={() =>
+                            toggleEpisode(episode, seasonEpisodes[selectedSeasonNumber] ?? [])
+                          }
+                        />
+                      );
+                    })}
+                  </YStack>
+                )}
               </YStack>
             ) : (
               <YStack px="$4" pt="$5" gap="$6">
@@ -814,6 +848,79 @@ export default function MediaDetailScreen() {
           </ScrollView>
         ) : null}
       </SafeAreaView>
+
+      {/* Season Selection Modal Picker */}
+      {details && (
+        <Modal
+          visible={pickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPickerVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setPickerVisible(false)}
+          >
+            <YStack
+              bg="$background"
+              w="90%"
+              maxHeight="60%"
+              borderRadius="$4"
+              borderWidth={1}
+              borderColor="$borderColor"
+              p="$4"
+              gap="$3"
+              onPress={(e) => e.stopPropagation()}
+            >
+              <Text color="$color" fow="800" fos="$5" pb="$2" borderBottomWidth={1} borderColor="$borderColor">
+                Select Season
+              </Text>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <YStack gap="$2">
+                  {details.seasons?.map((season) => {
+                    const isSelected = selectedSeasonNumber === season.season_number;
+                    return (
+                      <TouchableOpacity
+                        key={season.id}
+                        onPress={() => {
+                          setSelectedSeasonNumber(season.season_number);
+                          loadSeasonEpisodes(season.season_number);
+                          setPickerVisible(false);
+                        }}
+                        style={[
+                          styles.pickerItem,
+                          isSelected && styles.pickerItemActive,
+                        ]}
+                      >
+                        <XStack jc="space-between" ai="center" w="100%">
+                          <YStack>
+                            <Text
+                              color={isSelected ? "$purple9" : "$color"}
+                              fow={isSelected ? "800" : "500"}
+                              fos="$4"
+                            >
+                              {season.name}
+                            </Text>
+                            <Text color="$color" opacity={0.5} fos="$2">
+                              {season.episode_count} episodes
+                            </Text>
+                          </YStack>
+                          {isSelected && (
+                            <Text color="$purple9" fow="900" fos="$4">
+                              ✓
+                            </Text>
+                          )}
+                        </XStack>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </YStack>
+              </ScrollView>
+            </YStack>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </YStack>
   );
 }
@@ -848,129 +955,149 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pickerItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  pickerItemActive: {
+    backgroundColor: "rgba(142, 68, 173, 0.1)",
+  },
 });
 
-function SeasonCard({
-  season,
-  expanded,
-  loading,
-  episodes,
-  watchedEpisodes,
-  onToggle,
-  onToggleEpisode,
-  onOpenEpisode,
-}: {
-  season: Season;
-  expanded: boolean;
-  loading: boolean;
-  episodes: Episode[];
-  watchedEpisodes: Set<string>;
-  onToggle: () => void;
-  onToggleEpisode: (episode: Episode, list: Episode[]) => void;
-  onOpenEpisode: (episode: Episode) => void;
-}) {
-  return (
-    <YStack
-      bg="$backgroundElement"
-      borderRadius="$4"
-      borderWidth={1}
-      borderColor="$borderColor"
-      overflow="hidden"
-    >
-      <XStack
-        p="$3"
-        ai="center"
-        jc="space-between"
-        pressStyle={{ opacity: 0.8 }}
-        onPress={onToggle}
-      >
-        <YStack f={1} pr="$2">
-          <Text color="$color" fow="800" fos="$4">
-            {season.name}
-          </Text>
-          <Text color="$color" opacity={0.5} fos="$2">
-            {season.episode_count} episodes
-          </Text>
-        </YStack>
-        <Text color="$color" opacity={0.7} fos="$4">
-          {expanded ? "▲" : "▼"}
-        </Text>
-      </XStack>
-
-      {expanded && (
-        <YStack px="$3" pb="$3" gap="$2">
-          {loading ? (
-            <YStack py="$4" ai="center">
-              <Spinner color="$color" />
-            </YStack>
-          ) : episodes.length === 0 ? (
-            <YStack py="$4" ai="center">
-              <Text color="$color" opacity={0.5}>
-                No episodes available.
-              </Text>
-            </YStack>
-          ) : (
-            episodes.map((episode) => (
-              <EpisodeRow
-                key={episode.id}
-                episode={episode}
-                watched={watchedEpisodes.has(
-                  `${episode.season_number}:${episode.episode_number}`,
-                )}
-                onPress={() => onOpenEpisode(episode)}
-                onToggle={() => onToggleEpisode(episode, episodes)}
-              />
-            ))
-          )}
-        </YStack>
-      )}
-    </YStack>
-  );
-}
-
-function EpisodeRow({
+function EpisodeRowListItem({
   episode,
+  showDetails,
   watched,
+  isLast,
   onPress,
   onToggle,
 }: {
   episode: Episode;
+  showDetails: MediaDetails;
   watched: boolean;
+  isLast: boolean;
   onPress: () => void;
   onToggle: () => void;
 }) {
+  const formattedDate = useMemo(() => {
+    if (!episode.air_date) return "";
+    try {
+      const parts = episode.air_date.split("-");
+      if (parts.length === 3) {
+        const year = parts[0];
+        const monthNum = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        const months = [
+          "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        ];
+        const month = months[monthNum - 1] || "";
+        return `${month} ${day}, ${year}`;
+      }
+      return episode.air_date;
+    } catch {
+      return episode.air_date;
+    }
+  }, [episode.air_date]);
+
+  const subtitle = useMemo(() => {
+    const parts: string[] = [];
+    if (formattedDate) parts.push(formattedDate);
+    if (episode.runtime) parts.push(`${episode.runtime} min`);
+    return parts.join(" · ");
+  }, [formattedDate, episode.runtime]);
+
+  const episodeCode = `S${episode.season_number} · E${episode.episode_number}`;
+
   return (
-    <XStack
-      ai="center"
-      jc="space-between"
-      p="$2"
-      borderRadius="$3"
-      bg="$background"
-      pressStyle={{ opacity: 0.8 }}
-      onPress={onPress}
-    >
-      <YStack f={1} pr="$2">
-        <Text color="$color" fow="700" fos="$3" numberOfLines={1}>
-          Episode {episode.episode_number} - {episode.name}
-        </Text>
-        {episode.air_date && (
-          <Text color="$color" opacity={0.5} fos="$1">
-            {episode.air_date}
-          </Text>
-        )}
-      </YStack>
-      <Button
-        size="$2.5"
-        circular
-        bg={watched ? "$purple9" : "rgba(0,0,0,0.5)"}
-        color="white"
-        onPress={(event: any) => {
-          event?.stopPropagation?.();
-          onToggle();
-        }}
+    <YStack>
+      <XStack
+        ai="center"
+        py="$3"
+        gap="$3"
+        pressStyle={{ opacity: 0.85 }}
+        onPress={onPress}
       >
-        {watched ? "✓" : "+"}
-      </Button>
-    </XStack>
+        {/* Left: Thumbnail Still Image */}
+        <YStack w={120} h={68} borderRadius={8} overflow="hidden" bg="$backgroundElement">
+          {episode.still_path ? (
+            <Image
+              source={{
+                uri: imageUrl(episode.still_path, BACKDROP_IMAGE_BASE_URL),
+              }}
+              style={{ width: "100%", height: "100%" }}
+              contentFit="cover"
+            />
+          ) : showDetails.backdrop_path ? (
+            <Image
+              source={{
+                uri: imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL),
+              }}
+              style={{ width: "100%", height: "100%" }}
+              contentFit="cover"
+            />
+          ) : showDetails.poster_path ? (
+            <Image
+              source={{
+                uri: imageUrl(showDetails.poster_path, IMAGE_BASE_URL),
+              }}
+              style={{ width: "100%", height: "100%" }}
+              contentFit="cover"
+            />
+          ) : (
+            <YStack f={1} ai="center" jc="center">
+              <Text color="$color" opacity={0.4} fos="$1">No image</Text>
+            </YStack>
+          )}
+        </YStack>
+
+        {/* Middle: Content Stack */}
+        <YStack f={1} gap="$1">
+          <Text color="$color" opacity={0.5} fos="$2" fow="600" letterSpacing={0.5}>
+            {episodeCode}
+          </Text>
+          <Text color="$color" fow="700" fos="$4" numberOfLines={1}>
+            {episode.name}
+          </Text>
+          {subtitle ? (
+            <Text color="$color" opacity={0.5} fos="$2">
+              {subtitle}
+            </Text>
+          ) : null}
+        </YStack>
+
+        {/* Right: Circle Watch Toggle */}
+        <TouchableOpacity
+          onPress={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          activeOpacity={0.7}
+          style={{ padding: 8 }}
+        >
+          <YStack
+            w={24}
+            h={24}
+            borderRadius={12}
+            borderWidth={2}
+            borderColor={watched ? "#2ecc71" : "$borderColor"}
+            bg="transparent"
+            ai="center"
+            jc="center"
+          />
+        </TouchableOpacity>
+      </XStack>
+
+      {!isLast && (
+        <YStack height={1} bg="$borderColor" opacity={0.2} />
+      )}
+    </YStack>
   );
 }

@@ -1,0 +1,54 @@
+2026/08/07 09:54:05 Info: No .env file found, relying on system environment variables
+2026/08/07 09:54:05 SQLite Database migrated successfully.
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /api/auth/signup          --> main.handleSignup (4 handlers)
+[GIN-debug] POST   /api/auth/login           --> main.handleLogin (4 handlers)
+[GIN-debug] GET    /api/discover             --> main.handleDiscover (4 handlers)
+[GIN-debug] GET    /api/search               --> main.handleSearch (4 handlers)
+[GIN-debug] POST   /api/watchlist            --> main.handleAddWatchlist (5 handlers)
+[GIN-debug] GET    /api/watchlist            --> main.handleGetWatchlist (5 handlers)
+[GIN-debug] DELETE /api/watchlist/:id        --> main.handleDeleteWatchlist (5 handlers)
+[GIN-debug] GET    /api/profile              --> main.handleGetProfile (5 handlers)
+[GIN-debug] PUT    /api/profile              --> main.handleUpdateProfile (5 handlers)
+[GIN-debug] POST   /api/profile/clear-history --> main.handleClearWatchHistory (5 handlers)
+[GIN-debug] DELETE /api/profile/account      --> main.handleDeleteAccount (5 handlers)
+[GIN-debug] GET    /api/media/movie/:id      --> main.handleMovieDetails (4 handlers)
+[GIN-debug] GET    /api/media/tv/:id         --> main.handleTvDetails (4 handlers)
+[GIN-debug] GET    /api/media/tv/:id/season/:season --> main.handleSeasonDetails (4 handlers)
+[GIN-debug] GET    /api/media/tv/:id/season/:season/episode/:episode --> main.handleEpisodeDetails (4 handlers)
+[GIN-debug] POST   /api/watched              --> main.handleAddWatched (5 handlers)
+[GIN-debug] POST   /api/watched/bulk         --> main.handleAddWatchedBulk (5 handlers)
+[GIN-debug] DELETE /api/watched              --> main.handleDeleteWatched (5 handlers)
+[GIN-debug] GET    /api/watched              --> main.handleGetWatched (5 handlers)
+[GIN-debug] GET    /api/watched/status       --> main.handleWatchedStatus (4 handlers)
+2026/08/07 09:54:05 TMDB_API_KEY loaded successfully.
+2026/08/07 09:54:05 Server starting on port 8080...
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://github.com/gin-gonic/gin/blob/master/docs/doc.md#dont-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8080
+[GIN] 2026/08/07 - 09:58:10 | 204 | 23.088µs |             ::1 | OPTIONS  "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:10 | 200 | 989.331µs |             ::1 | GET      "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:10 | 204 |  7.829µs |             ::1 | OPTIONS  "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 09:58:10 | 200 | 126.834µs |             ::1 | GET      "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 09:58:41 | 204 | 64.509µs |             ::1 | OPTIONS  "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:41 | 200 | 116.361µs |             ::1 | GET      "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:41 | 204 |  6.745µs |             ::1 | OPTIONS  "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 09:58:41 | 200 | 451.707µs |             ::1 | GET      "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 09:58:48 | 204 |  7.064µs |             ::1 | OPTIONS  "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:48 | 204 |  7.209µs |             ::1 | OPTIONS  "/api/media/tv/119051/season/1/episode/1"
+[GIN] 2026/08/07 - 09:58:48 | 200 | 108.178µs |             ::1 | GET      "/api/media/tv/119051"
+[GIN] 2026/08/07 - 09:58:48 | 200 | 90.908µs |             ::1 | GET      "/api/media/tv/119051/season/1/episode/1"
+[GIN] 2026/08/07 - 10:01:08 | 204 |  91.18µs |             ::1 | OPTIONS  "/api/media/tv/119051"
+[GIN] 2026/08/07 - 10:01:08 | 200 | 193.331µs |             ::1 | GET      "/api/media/tv/119051"
+[GIN] 2026/08/07 - 10:01:08 | 204 |  7.372µs |             ::1 | OPTIONS  "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 10:01:08 | 200 | 141.094µs |             ::1 | GET      "/api/media/tv/119051/season/1"
+[GIN] 2026/08/07 - 10:01:15 | 204 |  9.229µs |             ::1 | OPTIONS  "/api/media/tv/119051"
+[GIN] 2026/08/07 - 10:01:15 | 204 |  6.412µs |             ::1 | OPTIONS  "/api/media/tv/119051/season/1/episode/1"
+[GIN] 2026/08/07 - 10:01:15 | 200 | 67.954µs |             ::1 | GET      "/api/media/tv/119051"
+[GIN] 2026/08/07 - 10:01:15 | 200 | 57.645µs |             ::1 | GET      "/api/media/tv/119051/season/1/episode/1"
+signal: terminated
