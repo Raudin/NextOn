@@ -1,7 +1,0 @@
-
-> nexton@1.0.0 web /app
-> expo start --web
-
-sh: 1: expo: not found
- ELIFECYCLE  Command failed.
- WARN   Local package.json exists, but node_modules missing, did you mean to install?
