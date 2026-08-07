@@ -1,19 +1,23 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, YStack } from "tamagui";
+import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
 import { cache } from "@/lib/cache";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
+  IMAGE_BASE_URL,
   fetchEpisodeDetails,
+  fetchMediaDetails,
   fetchWatchedStatus,
   imageUrl,
   markWatched,
   unmarkWatched,
   type Episode,
+  type MediaDetails,
 } from "@/lib/media-api";
 
 const invalidateMediaCaches = async () => {
@@ -40,6 +44,7 @@ export default function EpisodeDetailScreen() {
     episode: string;
   }>();
   const [episode, setEpisode] = useState<Episode | null>(null);
+  const [showDetails, setShowDetails] = useState<MediaDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [watched, setWatched] = useState(false);
@@ -54,17 +59,22 @@ export default function EpisodeDetailScreen() {
       setLoading(true);
       setError(null);
       try {
+        const fetchShowDetailsPromise = fetchMediaDetails("tv", params.id);
+        const fetchEpisodeDetailsPromise = fetchEpisodeDetails(
+          params.id,
+          Number(params.season),
+          Number(params.episode),
+        );
+
         if (token) {
-          const [data, status] = await Promise.all([
-            fetchEpisodeDetails(
-              params.id,
-              Number(params.season),
-              Number(params.episode),
-            ),
+          const [episodeData, showData, status] = await Promise.all([
+            fetchEpisodeDetailsPromise,
+            fetchShowDetailsPromise,
             fetchWatchedStatus(params.id, "tv"),
           ]);
           if (mounted) {
-            setEpisode(data);
+            setEpisode(episodeData);
+            setShowDetails(showData);
             const key = `${params.season}:${params.episode}`;
             setWatched(
               status.episodes?.some(
@@ -73,13 +83,13 @@ export default function EpisodeDetailScreen() {
             );
           }
         } else {
-          const data = await fetchEpisodeDetails(
-            params.id,
-            Number(params.season),
-            Number(params.episode),
-          );
+          const [episodeData, showData] = await Promise.all([
+            fetchEpisodeDetailsPromise,
+            fetchShowDetailsPromise,
+          ]);
           if (mounted) {
-            setEpisode(data);
+            setEpisode(episodeData);
+            setShowDetails(showData);
             setWatched(false);
           }
         }
@@ -131,6 +141,13 @@ export default function EpisodeDetailScreen() {
     }
   };
 
+  const formattedSeasonEpisode = useMemo(() => {
+    if (!episode) return "";
+    const s = String(episode.season_number).padStart(2, "0");
+    const e = String(episode.episode_number).padStart(2, "0");
+    return `S${s}E${e}`;
+  }, [episode]);
+
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -153,11 +170,28 @@ export default function EpisodeDetailScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
           >
-            <YStack h={300} bg="$backgroundElement">
+            {/* Hero Backdrop - 420px height like [id].tsx */}
+            <YStack h={420} bg="#151515">
               {episode.still_path ? (
                 <Image
                   source={{
                     uri: imageUrl(episode.still_path, BACKDROP_IMAGE_BASE_URL),
+                  }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                />
+              ) : showDetails?.backdrop_path ? (
+                <Image
+                  source={{
+                    uri: imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL),
+                  }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                />
+              ) : showDetails?.poster_path ? (
+                <Image
+                  source={{
+                    uri: imageUrl(showDetails.poster_path, IMAGE_BASE_URL),
                   }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
@@ -170,46 +204,99 @@ export default function EpisodeDetailScreen() {
                 </YStack>
               )}
 
-              <YStack pos="absolute" t={0} l={0} r={0} p="$4">
-                <Button
-                  size="$3"
-                  circular
-                  alignSelf="flex-start"
-                  bg="rgba(0,0,0,0.55)"
-                  color="white"
+              {/* Gradient Overlay */}
+              <YStack style={styles.gradientOverlay} />
+
+              <YStack
+                pos="absolute"
+                t={0}
+                l={0}
+                r={0}
+                b={0}
+                jc="space-between"
+                p="$4"
+              >
+                {/* Back button */}
+                <TouchableOpacity
                   onPress={() => router.back()}
+                  style={styles.backButton}
                 >
-                  Back
-                </Button>
+                  <Text color="white" fow="700" fos="$5">
+                    ‹
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Bottom of hero: Title & Metadata & Action Button */}
+                <YStack gap="$3" ai="center" w="100%">
+                  {/* Episode Title */}
+                  <Text
+                    color="white"
+                    fow="900"
+                    fos="$9"
+                    numberOfLines={3}
+                    ta="center"
+                    style={styles.titleText}
+                  >
+                    {episode.name}
+                  </Text>
+
+                  {/* Metadata subtitle */}
+                  <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" w="100%">
+                    <Text color="white" opacity={0.85} fow="500" fos="$3">
+                      {formattedSeasonEpisode}
+                    </Text>
+                    {episode.runtime ? (
+                      <XStack ai="center" gap="$2">
+                        <YStack
+                          w={3}
+                          h={3}
+                          borderRadius={999}
+                          bg="rgba(255,255,255,0.5)"
+                        />
+                        <Text color="white" opacity={0.7} fow="500" fos="$3">
+                          {episode.runtime} min
+                        </Text>
+                      </XStack>
+                    ) : null}
+                    {episode.air_date ? (
+                      <XStack ai="center" gap="$2">
+                        <YStack
+                          w={3}
+                          h={3}
+                          borderRadius={999}
+                          bg="rgba(255,255,255,0.5)"
+                        />
+                        <Text color="white" opacity={0.7} fow="500" fos="$3">
+                          {episode.air_date}
+                        </Text>
+                      </XStack>
+                    ) : null}
+                  </XStack>
+
+                  {/* Mark as Watched action button styled exactly like Watchlist button on show details page */}
+                  <XStack gap="$3" ai="center" jc="center" mt="$2" w="100%">
+                    <Button
+                      f={1}
+                      size="$4"
+                      borderRadius="$10"
+                      bg={watched ? "rgba(255,255,255,0.15)" : "transparent"}
+                      color="white"
+                      borderWidth={1}
+                      borderColor={watched ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.4)"}
+                      disabled={toggling}
+                      onPress={toggleWatched}
+                      iconAfter={toggling ? <Spinner size="small" color="white" /> : undefined}
+                      h={44}
+                    >
+                      {watched ? "✓ Watched" : "+ Mark as Watched"}
+                    </Button>
+                  </XStack>
+                </YStack>
               </YStack>
             </YStack>
 
+            {/* Episode Content: Just the Overview section directly below the hero banner */}
             <YStack px="$4" pt="$5" gap="$6">
-              <YStack gap="$2">
-                <Text color="$color" fow="900" fos="$8">
-                  {episode.name}
-                </Text>
-                <Text color="$color" opacity={0.6} fos="$3">
-                  Season {episode.season_number}, Episode{" "}
-                  {episode.episode_number}
-                  {episode.air_date ? ` • ${episode.air_date}` : ""}
-                  {episode.runtime ? ` • ${episode.runtime}m` : ""}
-                </Text>
-              </YStack>
-
-              <Button
-                size="$5"
-                borderRadius="$4"
-                bg={watched ? "$purple9" : "$backgroundElement"}
-                color={watched ? "white" : "$color"}
-                borderWidth={1}
-                borderColor={watched ? "$purple7" : "$borderColor"}
-                onPress={toggleWatched}
-                disabled={toggling}
-              >
-                {watched ? "✓ Watched" : "+ Mark as Watched"}
-              </Button>
-
               <YStack gap="$2">
                 <Text color="$color" fow="800" fos="$6">
                   Overview
@@ -225,3 +312,28 @@ export default function EpisodeDetailScreen() {
     </YStack>
   );
 }
+
+const styles = StyleSheet.create({
+  gradientOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "65%",
+    backgroundColor: "transparent",
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-start",
+  },
+  titleText: {
+    textShadowColor: "rgba(0,0,0,0.8)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
+  },
+});
