@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { setApiToken, loginUser, signupUser, type User } from "@/lib/media-api";
+import { router } from "expo-router";
+import { setApiToken, registerUnauthorizedCallback, loginUser, signupUser, type User } from "@/lib/media-api";
 import { cache } from "@/lib/cache";
 
 interface AuthContextType {
@@ -139,6 +140,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storage.deleteItem(USER_KEY);
     await cache.clearAll();
   }, []);
+
+  useEffect(() => {
+    registerUnauthorizedCallback(async () => {
+      await logout();
+      router.replace("/auth?expired=true");
+    });
+  }, [logout]);
 
   return (
     <AuthContext.Provider
