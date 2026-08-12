@@ -140,6 +140,13 @@ export function setApiToken(token: string | null) {
   authToken = token;
 }
 
+type UnauthorizedCallback = () => void;
+let unauthorizedCallback: UnauthorizedCallback | null = null;
+
+export function registerUnauthorizedCallback(callback: UnauthorizedCallback) {
+  unauthorizedCallback = callback;
+}
+
 const getBackendBaseUrls = (): string[] => {
   const hostUri =
     Constants.expoConfig?.hostUri ??
@@ -221,6 +228,7 @@ export async function apiFetch<T>(
       if (!response.ok) {
         // Parse error payload from backend if available
         let errorMsg = `HTTP ${response.status} from ${url}`;
+        const isUnauthorized = response.status === 401;
         try {
           const errData = await response.json();
           if (errData && errData.error) {
@@ -229,6 +237,13 @@ export async function apiFetch<T>(
         } catch {
           // ignore
         }
+
+        if (isUnauthorized && authToken && !path.includes("/api/auth/login") && !path.includes("/api/auth/signup")) {
+          if (unauthorizedCallback) {
+            unauthorizedCallback();
+          }
+        }
+
         throw new Error(errorMsg);
       }
       if (response.status === 204) {

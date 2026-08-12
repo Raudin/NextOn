@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Platform } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   Button,
@@ -15,7 +15,10 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function AuthScreen() {
   const router = useRouter();
+  const { expired } = useLocalSearchParams<{ expired?: string }>();
   const { login, signup } = useAuth();
+
+  const isExpired = expired === "true" || (Platform.OS === "web" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("expired") === "true");
 
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
@@ -89,6 +92,25 @@ export default function AuthScreen() {
               Your ultimate movie and TV show companion.
             </Paragraph>
           </YStack>
+
+          {/* Session Expired Notice */}
+          {isExpired && (
+            <YStack
+              bg="$purple2"
+              borderColor="$purple8"
+              borderWidth={1}
+              p="$3"
+              borderRadius="$4"
+              gap="$1"
+            >
+              <Text color="$purple10" fos="$3" fow="800" ta="center">
+                Session Expired ⚠️
+              </Text>
+              <Text color="$purple9" fos="$2" ta="center" fow="600">
+                Your session has expired. Please log in again.
+              </Text>
+            </YStack>
+          )}
 
           {/* Toggle Tab Row */}
           <XStack bg="$backgroundElement" p="$1" borderRadius="$5" mt="$3">
