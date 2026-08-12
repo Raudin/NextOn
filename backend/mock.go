@@ -2,11 +2,20 @@ package main
 
 import (
 	"fmt"
+	"time"
 )
 
 func getMockDiscoverData() *DiscoverResponse {
 	// Realistic, high-fidelity mock data using actual TMDB poster/backdrop paths
 	// and details to ensure a gorgeous layout even without an API key.
+	today := time.Now()
+	gladiatorDate := today.AddDate(0, -2, 0).Format("2006-01-02")
+	sonicDate := today.AddDate(0, -1, 0).Format("2006-01-02")
+	squidGameDate := today.AddDate(0, -3, 0).Format("2006-01-02")
+	wickedDate := today.AddDate(0, 0, 3).Format("2006-01-02")
+	wednesdayDate := today.AddDate(0, -2, 0).Format("2006-01-02")
+	insideOutDate := today.AddDate(1, 2, 0).Format("2006-01-02")
+
 	trending := []TMDBMedia{
 		{
 			ID:           558449,
@@ -15,7 +24,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/3V4kDRpwBMj4NfbORkZIIjK2mIE.jpg",
 			VoteAverage:  6.8,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-11-05",
+			ReleaseDate:  gladiatorDate,
 		},
 		{
 			ID:           939243,
@@ -24,7 +33,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/zfbjgqjCpwlxXgny7aPQptQ4vF5.jpg",
 			VoteAverage:  7.8,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-12-19",
+			ReleaseDate:  sonicDate,
 		},
 		{
 			ID:           135397,
@@ -33,7 +42,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/yg0ihCPPn0Zc7x570hCkiR3rSp5.jpg",
 			VoteAverage:  7.9,
 			MediaType:    "tv",
-			FirstAirDate: "2021-09-17",
+			FirstAirDate: squidGameDate,
 		},
 		{
 			ID:           402431,
@@ -42,7 +51,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/uKb2jW2SNee5T58Cn7g6225Xcl1.jpg",
 			VoteAverage:  7.4,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-11-20",
+			ReleaseDate:  wickedDate,
 		},
 		{
 			ID:           119051,
@@ -51,7 +60,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/iHjx1zR12948yR9Vsc4Z648wv2u.jpg",
 			VoteAverage:  8.0,
 			MediaType:    "tv",
-			FirstAirDate: "2022-11-23",
+			FirstAirDate: wednesdayDate,
 		},
 		{
 			ID:           1022789,
@@ -60,7 +69,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/stKG8fbvqvPAywj67HgkWh4IQUg.jpg",
 			VoteAverage:  7.6,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-06-11",
+			ReleaseDate:  insideOutDate,
 		},
 	}
 
@@ -72,7 +81,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/zfbjgqjCpwlxXgny7aPQptQ4vF5.jpg",
 			VoteAverage:  7.8,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-12-19",
+			ReleaseDate:  sonicDate,
 		},
 		{
 			ID:           558449,
@@ -81,7 +90,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/3V4kDRpwBMj4NfbORkZIIjK2mIE.jpg",
 			VoteAverage:  6.8,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-11-05",
+			ReleaseDate:  gladiatorDate,
 		},
 		{
 			ID:           762509,
@@ -90,7 +99,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/oHGlUzUi3t6q6VIPiOAXmgEH66c.jpg",
 			VoteAverage:  7.1,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-12-18",
+			ReleaseDate:  gladiatorDate,
 		},
 		{
 			ID:           1241982,
@@ -99,7 +108,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/h7rJvl7vl45615nZOC6ZfxmZuu6.jpg",
 			VoteAverage:  7.0,
 			MediaType:    "movie",
-			ReleaseDate:  "2024-11-27",
+			ReleaseDate:  gladiatorDate,
 		},
 	}
 
@@ -111,7 +120,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/yg0ihCPPn0Zc7x570hCkiR3rSp5.jpg",
 			VoteAverage:  7.9,
 			MediaType:    "tv",
-			FirstAirDate: "2021-09-17",
+			FirstAirDate: squidGameDate,
 		},
 		{
 			ID:           119051,
@@ -120,7 +129,7 @@ func getMockDiscoverData() *DiscoverResponse {
 			BackdropPath: "/iHjx1zR12948yR9Vsc4Z648wv2u.jpg",
 			VoteAverage:  8.0,
 			MediaType:    "tv",
-			FirstAirDate: "2022-11-23",
+			FirstAirDate: wednesdayDate,
 		},
 	}
 
@@ -151,12 +160,34 @@ func getMockSeasonDetails(seriesID, seasonNum int64) (*SeasonDetails, bool) {
 
 	episodes := make([]Episode, 0, count)
 	for i := 1; i <= count; i++ {
+		airDate := time.Now().AddDate(0, 0, -5).Format("2006-01-02") // default 5 days ago
+		if seriesID == 135397 {
+			// Squid Game Season 1
+			if i < 9 {
+				// Ep 1-8 released weekly in the past
+				airDate = time.Now().AddDate(0, 0, -7*(9-i)).Format("2006-01-02")
+			} else {
+				// Ep 9 is upcoming (in 2 days)
+				airDate = time.Now().AddDate(0, 0, 2).Format("2006-01-02")
+			}
+		} else if seriesID == 119051 {
+			// Wednesday Season 1
+			if i < 8 {
+				// Ep 1-7 released weekly in the past
+				airDate = time.Now().AddDate(0, 0, -7*(8-i)).Format("2006-01-02")
+			} else {
+				// Ep 8 is upcoming (in 10 days, beyond standard week!)
+				airDate = time.Now().AddDate(0, 0, 10).Format("2006-01-02")
+			}
+		}
+
 		episodes = append(episodes, Episode{
 			ID:            int64(i),
 			Name:          fmt.Sprintf("Episode %d", i),
 			Overview:      fmt.Sprintf("Overview for episode %d.", i),
 			EpisodeNumber: int64(i),
 			SeasonNumber:  seasonNum,
+			AirDate:       airDate,
 		})
 	}
 
@@ -206,6 +237,14 @@ func getFallbackMediaDetails(mediaType string, id int64) *MediaDetails {
 }
 
 func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
+	today := time.Now()
+	gladiatorDate := today.AddDate(0, -2, 0).Format("2006-01-02")
+	sonicDate := today.AddDate(0, -1, 0).Format("2006-01-02")
+	squidGameDate := today.AddDate(0, -3, 0).Format("2006-01-02")
+	wickedDate := today.AddDate(0, 0, 3).Format("2006-01-02")
+	wednesdayDate := today.AddDate(0, -2, 0).Format("2006-01-02")
+	insideOutDate := today.AddDate(1, 2, 0).Format("2006-01-02")
+
 	lookup := map[int64]MediaDetails{
 		558449: {
 			TMDBMedia: TMDBMedia{
@@ -215,7 +254,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/3V4kDRpwBMj4NfbORkZIIjK2mIE.jpg",
 				VoteAverage:  6.8,
 				MediaType:    "movie",
-				ReleaseDate:  "2024-11-05",
+				ReleaseDate:  gladiatorDate,
 			},
 			Runtime:  148,
 			Overview: "Years after witnessing the death of Maximus, Lucius is forced to enter the Colosseum after his home is conquered by tyrannical emperors who now lead Rome.",
@@ -234,7 +273,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/zfbjgqjCpwlxXgny7aPQptQ4vF5.jpg",
 				VoteAverage:  7.8,
 				MediaType:    "movie",
-				ReleaseDate:  "2024-12-19",
+				ReleaseDate:  sonicDate,
 			},
 			Runtime:  110,
 			Overview: "Sonic, Knuckles, and Tails reunite against a powerful new adversary, Shadow, whose abilities force them to seek an unlikely alliance.",
@@ -253,7 +292,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/yg0ihCPPn0Zc7x570hCkiR3rSp5.jpg",
 				VoteAverage:  7.9,
 				MediaType:    "tv",
-				FirstAirDate: "2021-09-17",
+				FirstAirDate: squidGameDate,
 			},
 			EpisodeRunTime:  []int64{54},
 			NumberOfSeasons: 1,
@@ -278,7 +317,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/uKb2jW2SNee5T58Cn7g6225Xcl1.jpg",
 				VoteAverage:  7.4,
 				MediaType:    "movie",
-				ReleaseDate:  "2024-11-20",
+				ReleaseDate:  wickedDate,
 			},
 			Runtime:  160,
 			Overview: "Elphaba, misunderstood because of her green skin, forms an unlikely friendship with Glinda before their lives take very different turns in Oz.",
@@ -297,7 +336,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/iHjx1zR12948yR9Vsc4Z648wv2u.jpg",
 				VoteAverage:  8.0,
 				MediaType:    "tv",
-				FirstAirDate: "2022-11-23",
+				FirstAirDate: wednesdayDate,
 			},
 			EpisodeRunTime:  []int64{48},
 			NumberOfSeasons: 1,
@@ -322,7 +361,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				BackdropPath: "/stKG8fbvqvPAywj67HgkWh4IQUg.jpg",
 				VoteAverage:  7.6,
 				MediaType:    "movie",
-				ReleaseDate:  "2024-06-11",
+				ReleaseDate:  insideOutDate,
 			},
 			Runtime:  97,
 			Overview: "Riley enters her teenage years, and Headquarters is suddenly disrupted by new emotions that complicate everything Joy thought she understood.",

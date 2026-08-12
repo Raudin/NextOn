@@ -69,6 +69,18 @@ export default function MediaDetailScreen() {
   const isMovie = params.type === "movie";
   const isTv = params.type === "tv";
 
+  const isUnreleased = useMemo(() => {
+    if (!details) return false;
+    const dateStr = details.release_date || details.first_air_date;
+    if (!dateStr) return false;
+    const parts = dateStr.split("-");
+    if (parts.length !== 3) return false;
+    const releaseDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return releaseDate > today;
+  }, [details]);
+
   const runtime = useMemo(() => {
     if (!details) {
       return "";
@@ -614,12 +626,12 @@ export default function MediaDetailScreen() {
                       color="white"
                       borderWidth={1}
                       borderColor="rgba(255,255,255,0.4)"
-                      disabled={watchlistLoading || watchedLoading}
+                      disabled={watchlistLoading || watchedLoading || (inWatchlist && isUnreleased)}
                       onPress={handleWatchlistButtonPress}
                       iconAfter={(watchlistLoading || watchedLoading) ? <Spinner size="small" color="white" /> : undefined}
                       h={44}
                     >
-                      {!inWatchlist ? "+ Watchlist" : isSeen ? "✓ Seen" : "✔ Mark as seen"}
+                      {!inWatchlist ? "+ Watchlist" : isUnreleased ? "Unreleased" : isSeen ? "✓ Seen" : "✔ Mark as seen"}
                     </Button>
 
                     {trailer ? (
@@ -648,7 +660,7 @@ export default function MediaDetailScreen() {
                         bg={watched ? "rgba(255, 50, 50, 0.2)" : "rgba(255,255,255,0.1)"}
                         borderWidth={1}
                         borderColor={watched ? "rgba(255, 50, 50, 0.5)" : "rgba(255,255,255,0.2)"}
-                        disabled={watchedLoading}
+                        disabled={watchedLoading || isUnreleased}
                         onPress={toggleWatched}
                         p="$0"
                         jc="center"
@@ -1042,25 +1054,44 @@ function EpisodeRowListItem({
         </YStack>
 
         {/* Right: Circle Watch Toggle */}
-        <TouchableOpacity
-          onPress={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          activeOpacity={0.7}
-          style={{ padding: 8 }}
-        >
-          <YStack
-            w={24}
-            h={24}
-            borderRadius={12}
-            borderWidth={2}
-            borderColor={watched ? "#2ecc71" : "$borderColor"}
-            bg="transparent"
-            ai="center"
-            jc="center"
-          />
-        </TouchableOpacity>
+        {(() => {
+          const epUnreleased = (() => {
+            if (!episode.air_date) return false;
+            const parts = episode.air_date.split("-");
+            if (parts.length !== 3) return false;
+            const airDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return airDate > today;
+          })();
+
+          return (
+            <TouchableOpacity
+              onPress={(e) => {
+                if (epUnreleased) return;
+                e.stopPropagation();
+                onToggle();
+              }}
+              activeOpacity={epUnreleased ? 1 : 0.7}
+              style={{ padding: 8, opacity: epUnreleased ? 0.35 : 1 }}
+            >
+              <YStack
+                w={24}
+                h={24}
+                borderRadius={12}
+                borderWidth={2}
+                borderColor={watched ? "#2ecc71" : "$borderColor"}
+                bg="transparent"
+                ai="center"
+                jc="center"
+              >
+                {epUnreleased && (
+                  <Text color="$color" fos="$1">🔒</Text>
+                )}
+              </YStack>
+            </TouchableOpacity>
+          );
+        })()}
       </XStack>
 
       {!isLast && (
