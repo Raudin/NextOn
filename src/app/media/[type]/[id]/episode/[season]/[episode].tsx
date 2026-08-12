@@ -50,6 +50,16 @@ export default function EpisodeDetailScreen() {
   const [watched, setWatched] = useState(false);
   const [toggling, setToggling] = useState(false);
 
+  const isEpisodeUnreleased = useMemo(() => {
+    if (!episode?.air_date) return false;
+    const parts = episode.air_date.split("-");
+    if (parts.length !== 3) return false;
+    const airDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return airDate > today;
+  }, [episode]);
+
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -283,12 +293,12 @@ export default function EpisodeDetailScreen() {
                       color="white"
                       borderWidth={1}
                       borderColor={watched ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.4)"}
-                      disabled={toggling}
+                      disabled={toggling || isEpisodeUnreleased}
                       onPress={toggleWatched}
                       iconAfter={toggling ? <Spinner size="small" color="white" /> : undefined}
                       h={44}
                     >
-                      {watched ? "✓ Watched" : "+ Mark as Watched"}
+                      {isEpisodeUnreleased ? "Unreleased" : watched ? "✓ Watched" : "+ Mark as Watched"}
                     </Button>
                   </XStack>
                 </YStack>

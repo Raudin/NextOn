@@ -37,6 +37,11 @@ func handleAddWatched(c *gin.Context) {
 		return
 	}
 
+	if isUnreleased(req.MediaType, req.MediaID, req.SeasonNumber, req.EpisodeNumber) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot watch unreleased content"})
+		return
+	}
+
 	req.UserID = userUID
 	req.WatchedAt = time.Now()
 
@@ -61,6 +66,7 @@ func handleAddWatchedBulk(c *gin.Context) {
 	}
 
 	now := time.Now()
+	var addedCount int
 	for i := range req.Items {
 		item := &req.Items[i]
 		if item.MediaType != "movie" && item.MediaType != "tv" {
@@ -75,12 +81,16 @@ func handleAddWatchedBulk(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Season and episode numbers are required for TV episodes"})
 			return
 		}
+		if isUnreleased(item.MediaType, item.MediaID, item.SeasonNumber, item.EpisodeNumber) {
+			continue
+		}
 		item.UserID = userUID
 		item.WatchedAt = now
 		addOrUpdateWatched(userUID, *item)
+		addedCount++
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"added": len(req.Items)})
+	c.JSON(http.StatusCreated, gin.H{"added": addedCount})
 }
 
 func handleDeleteWatched(c *gin.Context) {
@@ -320,4 +330,84 @@ func ptrInt64Equal(a, b *int64) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func isUnreleased(mediaType string, mediaID int64, seasonNum, episodeNum *int64) bool {
+	if mediaType == "movie" {
+		apiKey := os.Getenv("TMDB_API_KEY")
+		var releaseDateStr string
+		if apiKey == "dummy" {
+			details, ok := getMockMediaDetails("movie", mediaID)
+			if !ok {
+				details = getFallbackMediaDetails("movie", mediaID)
+			}
+			releaseDateStr = details.ReleaseDate
+		} else {
+			detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d", mediaID)
+			var response tmdbMediaDetailsResponse
+			if err := tmdbGet(detailsURL, apiKey, &response); err != nil {
+				details, ok := getMockMediaDetails("movie", mediaID)
+				if !ok {
+					details = getFallbackMediaDetails("movie", mediaID)
+				}
+				releaseDateStr = details.ReleaseDate
+			} else {
+				releaseDateStr = response.ReleaseDate
+			}
+		}
+
+		if releaseDateStr == "" {
+			return false
+		}
+
+		releaseDate, err := time.Parse("2006-01-02", releaseDateStr)
+		if err != nil {
+			return false
+		}
+
+		today := time.Now().Truncate(24 * time.Hour)
+		return releaseDate.After(today)
+	}
+
+	if mediaType == "tv" {
+		if seasonNum == nil || episodeNum == nil {
+			return false
+		}
+
+		apiKey := os.Getenv("TMDB_API_KEY")
+		var airDateStr string
+		if apiKey == "dummy" {
+			episode, ok := getMockEpisodeDetails(mediaID, *seasonNum, *episodeNum)
+			if !ok {
+				return false
+			}
+			airDateStr = episode.AirDate
+		} else {
+			episodeURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d/episode/%d", mediaID, *seasonNum, *episodeNum)
+			var episode Episode
+			if err := tmdbGet(episodeURL, apiKey, &episode); err != nil {
+				ep, ok := getMockEpisodeDetails(mediaID, *seasonNum, *episodeNum)
+				if !ok {
+					return false
+				}
+				airDateStr = ep.AirDate
+			} else {
+				airDateStr = episode.AirDate
+			}
+		}
+
+		if airDateStr == "" {
+			return false
+		}
+
+		airDate, err := time.Parse("2006-01-02", airDateStr)
+		if err != nil {
+			return false
+		}
+
+		today := time.Now().Truncate(24 * time.Hour)
+		return airDate.After(today)
+	}
+
+	return false
 }
