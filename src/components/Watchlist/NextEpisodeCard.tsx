@@ -56,10 +56,8 @@ export default function NextEpisodeCard({
       const regularSeasons = (detailsData.seasons || [])
         .filter((s) => s.season_number >= 1)
         .sort((a, b) => a.season_number - b.season_number);
-      const specialSeasons = (detailsData.seasons || [])
-        .filter((s) => s.season_number === 0);
 
-      const allSeasons = [...regularSeasons, ...specialSeasons];
+      const allSeasons = regularSeasons;
 
       let foundNext = false;
       for (const s of allSeasons) {

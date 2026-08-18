@@ -41,7 +41,17 @@ const invalidateMediaCaches = async () => {
 };
 
 
-const getCountdownString = (targetDate: Date) => {
+const ensureDate = (val: any): Date | null => {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  const parsed = new Date(val);
+  return isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getCountdownString = (inputDate: Date | string | null | undefined) => {
+  const targetDate = ensureDate(inputDate);
+  if (!targetDate) return "Upcoming";
+
   const now = new Date();
   const diffMs = targetDate.getTime() - now.getTime();
   if (diffMs <= 0) return "Released";
@@ -63,7 +73,10 @@ const getCountdownString = (targetDate: Date) => {
   return `${diffHours}h`;
 };
 
-const getGroupHeader = (targetDate: Date) => {
+const getGroupHeader = (inputDate: Date | string | null | undefined) => {
+  const targetDate = ensureDate(inputDate);
+  if (!targetDate) return "Upcoming";
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -137,6 +150,18 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<"tv" | "movies">("tv");
   const [markingId, setMarkingId] = useState<number | null>(null);
 
+  const readyNewSeasonList = useMemo(() => {
+    return activeTab === "tv"
+      ? showsReady.filter((item) => item.episode.episode_number === 1)
+      : [];
+  }, [activeTab, showsReady]);
+
+  const readyRegularList = useMemo(() => {
+    return activeTab === "tv"
+      ? showsReady.filter((item) => item.episode.episode_number !== 1)
+      : moviesReady;
+  }, [activeTab, showsReady, moviesReady]);
+
   useEffect(() => {
     if (!authLoading && !token) {
       router.replace("/auth");
@@ -144,19 +169,24 @@ export default function HomeScreen() {
   }, [authLoading, token, router]);
 
   const loadData = useCallback(async (forceRefresh = false) => {
-    if (!token) return;
-    setError(null);
-
     const cachedShowsReady = await cache.get<ResolvedShowItem[]>("home_shows_ready");
     const cachedShowsUpcoming = await cache.get<ResolvedShowItem[]>("home_shows_upcoming");
     const cachedMoviesReady = await cache.get<ResolvedMovieItem[]>("home_movies_ready");
     const cachedMoviesUpcoming = await cache.get<ResolvedMovieItem[]>("home_movies_upcoming");
 
+    const parseCachedItemDates = <T extends { targetDate?: any }>(items: T[] | null): T[] => {
+      if (!items || !Array.isArray(items)) return [];
+      return items.map((item) => ({
+        ...item,
+        targetDate: ensureDate(item.targetDate),
+      }));
+    };
+
     if (cachedShowsReady || cachedShowsUpcoming || cachedMoviesReady || cachedMoviesUpcoming) {
-      setShowsReady(cachedShowsReady || []);
-      setShowsUpcoming(cachedShowsUpcoming || []);
-      setMoviesReady(cachedMoviesReady || []);
-      setMoviesUpcoming(cachedMoviesUpcoming || []);
+      setShowsReady(parseCachedItemDates(cachedShowsReady));
+      setShowsUpcoming(parseCachedItemDates(cachedShowsUpcoming));
+      setMoviesReady(parseCachedItemDates(cachedMoviesReady));
+      setMoviesUpcoming(parseCachedItemDates(cachedMoviesUpcoming));
       setLoading(false);
       setBackgroundRefreshing(true);
     } else {
@@ -188,10 +218,8 @@ export default function HomeScreen() {
             const regularSeasons = (details.seasons || [])
               .filter((s) => s.season_number >= 1)
               .sort((a, b) => a.season_number - b.season_number);
-            const specialSeasons = (details.seasons || [])
-              .filter((s) => s.season_number === 0);
 
-            const allSeasons = [...regularSeasons, ...specialSeasons];
+            const allSeasons = regularSeasons;
 
             let nextEp: Episode | null = null;
             for (const s of allSeasons) {
@@ -280,9 +308,11 @@ export default function HomeScreen() {
       }
 
       const dateSort = (a: any, b: any) => {
-        if (!a.targetDate) return 1;
-        if (!b.targetDate) return -1;
-        return a.targetDate.getTime() - b.targetDate.getTime();
+        const dA = ensureDate(a.targetDate);
+        const dB = ensureDate(b.targetDate);
+        if (!dA) return 1;
+        if (!dB) return -1;
+        return dA.getTime() - dB.getTime();
       };
       nextShowsUpcoming.sort(dateSort);
       nextMoviesUpcoming.sort(dateSort);
@@ -326,20 +356,123 @@ export default function HomeScreen() {
 
     try {
       if (item.isTv) {
+        // Mark current episode watched on server
         await markWatched({
           media_id: item.show.id,
           media_type: "tv",
           season_number: item.episode.season_number,
           episode_number: item.episode.episode_number,
         });
+
+        // Find next episode asynchronously/locally
+        let nextEp: Episode | null = null;
+        try {
+          const watchedStatus = await fetchWatchedStatus(item.show.id, "tv");
+          const watchedEpisodes = watchedStatus.episodes || [];
+          const watchedCountBySeason: Record<number, number> = {};
+          for (const ep of watchedEpisodes) {
+            watchedCountBySeason[ep.season] = (watchedCountBySeason[ep.season] || 0) + 1;
+          }
+
+          const regularSeasons = (item.details.seasons || [])
+            .filter((s) => s.season_number >= 1)
+            .sort((a, b) => a.season_number - b.season_number);
+
+          for (const s of regularSeasons) {
+            const total = s.episode_count;
+            const watchedCount = watchedCountBySeason[s.season_number] || 0;
+            if (watchedCount < total) {
+              const seasonData = await fetchSeasonEpisodes(item.show.id, s.season_number);
+              const found = seasonData.episodes.find(
+                (ep) =>
+                  !watchedEpisodes.some(
+                    (we) => we.season === ep.season_number && we.episode === ep.episode_number
+                  )
+              );
+              if (found) {
+                nextEp = found;
+                break;
+              }
+            }
+          }
+        } catch (epErr) {
+          console.warn("Failed to resolve next episode inline:", epErr);
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Update local state smoothly
+        setShowsReady((prevReady) => {
+          if (!nextEp) {
+            return prevReady.filter((s) => s.id !== item.id);
+          }
+          const dateStr = nextEp.air_date || "";
+          let targetDate: Date | null = null;
+          if (dateStr) {
+            const parts = dateStr.split("-");
+            if (parts.length === 3) {
+              targetDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            }
+          }
+          const isUnreleased = targetDate && targetDate > today;
+          if (isUnreleased) {
+            return prevReady.filter((s) => s.id !== item.id);
+          }
+
+          return prevReady.map((s) => {
+            if (s.id === item.id) {
+              return {
+                ...s,
+                episode: nextEp!,
+                formattedDate: dateStr,
+                targetDate,
+              };
+            }
+            return s;
+          });
+        });
+
+        if (nextEp) {
+          const dateStr = nextEp.air_date || "";
+          let targetDate: Date | null = null;
+          if (dateStr) {
+            const parts = dateStr.split("-");
+            if (parts.length === 3) {
+              targetDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            }
+          }
+          const isUnreleased = targetDate && targetDate > today;
+          if (isUnreleased) {
+            setShowsUpcoming((prevUpcoming) => {
+              const updatedItem: ResolvedShowItem = {
+                ...item,
+                episode: nextEp!,
+                formattedDate: dateStr,
+                targetDate,
+              };
+              const filtered = prevUpcoming.filter((s) => s.id !== item.id);
+              const nextList = [...filtered, updatedItem];
+              const dateSort = (a: any, b: any) => {
+                const dA = ensureDate(a.targetDate);
+                const dB = ensureDate(b.targetDate);
+                if (!dA) return 1;
+                if (!dB) return -1;
+                return dA.getTime() - dB.getTime();
+              };
+              return nextList.sort(dateSort);
+            });
+          }
+        }
       } else {
         await markWatched({
           media_id: item.movie.id,
           media_type: "movie",
         });
+        setMoviesReady((prev) => prev.filter((m) => m.id !== item.id));
       }
+
       await invalidateMediaCaches();
-      await loadData(true);
     } catch (err: any) {
       setError(err.message || "Failed to mark as watched");
     } finally {
@@ -476,28 +609,136 @@ export default function HomeScreen() {
             >
               <YStack gap="$5">
 
-                {/* Section 1: Ready to Watch */}
-                {activeReadyList.length > 0 && (
-                  <YStack gap="$3">
+                {/* Section 1A: New Season Enclosed Container Card */}
+                {readyNewSeasonList.length > 0 && (
+                  <YStack
+                    gap="$3"
+                    p="$3.5"
+                    borderRadius="$4"
+                    bg="$backgroundElement"
+                    borderWidth={1}
+                    borderColor="$orange8"
+                  >
+                    <XStack ai="center" gap="$2">
+                      <YStack px="$2" py="$0.5" bg="$orange10" borderRadius="$2">
+                        <Text color="white" fow="900" fos="$1" letterSpacing={0.5}>
+                          NEW SEASON
+                        </Text>
+                      </YStack>
+                      <Text fow="900" fos="$5" color="$color">
+                        New Season Premieres
+                      </Text>
+                    </XStack>
+                    <YStack gap="$3">
+                      {readyNewSeasonList.map((item) => {
+                        const posterPath = item.show.poster_path;
+                        const posterUrl = posterPath ? imageUrl(posterPath) : null;
+                        const title = mediaTitle(item.show);
+                        const detailsText = `S${item.episode.season_number}, E${item.episode.episode_number}`;
+                        const epNameText = item.episode.name;
+                        const isMarking = markingId === item.id;
+
+                        return (
+                          <XStack
+                            key={`ready-${item.id}`}
+                            gap="$3"
+                            p="$3"
+                            borderRadius="$4"
+                            bg="$background"
+                            borderWidth={1}
+                            borderColor="$borderColor"
+                            pressStyle={{ opacity: 0.88 }}
+                            onPress={() => handleCardPress(item)}
+                            ai="center"
+                            jc="space-between"
+                          >
+                            <XStack gap="$3" f={1} ai="center">
+                              <YStack w={60} h={90} borderRadius="$2" overflow="hidden" bg="$backgroundElement">
+                                {posterUrl ? (
+                                  <Image
+                                    source={{ uri: posterUrl }}
+                                    style={styles.posterImage}
+                                    contentFit="cover"
+                                  />
+                                ) : (
+                                  <YStack f={1} ai="center" jc="center">
+                                    <Text color="$color" opacity={0.45} fos="$1" ta="center">
+                                      No art
+                                    </Text>
+                                  </YStack>
+                                )}
+                              </YStack>
+
+                              <YStack f={1} gap="$1" py="$1">
+                                <Text color="$orange10" fow="bold" fos="$1" letterSpacing={0.5}>
+                                  NEW SEASON
+                                </Text>
+                                <Text color="$color" fow="900" fos="$4" numberOfLines={1}>
+                                  {title}
+                                </Text>
+                                <Text color="$color" opacity={0.8} fow="600" fos="$3">
+                                  {detailsText}
+                                </Text>
+                                <Text color="$color" opacity={0.5} fow="500" fos="$2" numberOfLines={1}>
+                                  {epNameText}
+                                </Text>
+                              </YStack>
+                            </XStack>
+
+                            <TouchableOpacity
+                              onPress={(e) => {
+                                e.stopPropagation();
+                                handleMarkWatched(item);
+                              }}
+                              disabled={markingId !== null}
+                              style={styles.checkmarkTouch}
+                            >
+                              <YStack
+                                w={36}
+                                h={36}
+                                borderRadius={18}
+                                borderWidth={2.5}
+                                borderColor="$borderColor"
+                                bg="transparent"
+                                ai="center"
+                                jc="center"
+                              >
+                                {isMarking ? (
+                                  <Spinner size="small" color="$color" />
+                                ) : null}
+                              </YStack>
+                            </TouchableOpacity>
+                          </XStack>
+                        );
+                      })}
+                    </YStack>
+                  </YStack>
+                )}
+
+                {/* Section 1B: Ready to Watch Enclosed Container Card */}
+                {readyRegularList.length > 0 && (
+                  <YStack
+                    gap="$3"
+                    p="$3.5"
+                    borderRadius="$4"
+                    bg="$backgroundElement"
+                    borderWidth={1}
+                    borderColor="$borderColor"
+                  >
                     <Text fow="900" fos="$5" color="$color">
                       Ready to Watch
                     </Text>
                     <YStack gap="$3">
-                      {activeReadyList.map((item) => {
+                      {readyRegularList.map((item) => {
                         const posterPath = item.isTv ? item.show.poster_path : item.movie.poster_path;
                         const posterUrl = posterPath ? imageUrl(posterPath) : null;
                         const title = item.isTv ? mediaTitle(item.show) : mediaTitle(item.movie);
 
-                        // Calculate visual badge text
                         let badgeText = "READY TO WATCH";
-                        if (item.isTv) {
-                          if (item.episode.episode_number === 1) {
-                            badgeText = "NEW SEASON";
-                          } else if (item.details?.seasons) {
-                            const currentSeason = item.details.seasons.find(s => s.season_number === item.episode.season_number);
-                            if (currentSeason && item.episode.episode_number === currentSeason.episode_count) {
-                              badgeText = "SEASON FINALE";
-                            }
+                        if (item.isTv && item.details?.seasons) {
+                          const currentSeason = item.details.seasons.find(s => s.season_number === item.episode.season_number);
+                          if (currentSeason && item.episode.episode_number === currentSeason.episode_count) {
+                            badgeText = "SEASON FINALE";
                           }
                         }
 
@@ -517,7 +758,7 @@ export default function HomeScreen() {
                             gap="$3"
                             p="$3"
                             borderRadius="$4"
-                            bg="$backgroundElement"
+                            bg="$background"
                             borderWidth={1}
                             borderColor="$borderColor"
                             pressStyle={{ opacity: 0.88 }}
@@ -526,7 +767,7 @@ export default function HomeScreen() {
                             jc="space-between"
                           >
                             <XStack gap="$3" f={1} ai="center">
-                              <YStack w={60} h={90} borderRadius="$2" overflow="hidden" bg="$background">
+                              <YStack w={60} h={90} borderRadius="$2" overflow="hidden" bg="$backgroundElement">
                                 {posterUrl ? (
                                   <Image
                                     source={{ uri: posterUrl }}

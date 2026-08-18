@@ -60,6 +60,9 @@ export default function ProfileScreen() {
   const [selectedAvatar, setSelectedAvatar] = useState("");
   const [updating, setUpdating] = useState(false);
 
+  // Preferences / Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !token) {
       router.replace("/auth");
@@ -200,7 +203,7 @@ export default function ProfileScreen() {
   return (
     <YStack f={1} bg="$background">
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <YStack px="$5" py="$6" gap="$6" maxWidth={600} alignSelf="center" w="100%">
+        <YStack px="$4" py="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
 
           {error && (
             <YStack bg="$red2" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
@@ -209,7 +212,7 @@ export default function ProfileScreen() {
             </YStack>
           )}
 
-          {/* Profile Header (Avatar / Level / Editing display name) */}
+          {/* Profile Header (Avatar Top-Left, Settings Icon Top-Right) */}
           <ProfileHeader
             profileUser={profileUser}
             stats={stats}
@@ -221,41 +224,27 @@ export default function ProfileScreen() {
             setSelectedAvatar={setSelectedAvatar}
             updating={updating}
             onUpdateProfileDetails={handleUpdateProfileDetails}
+            onOpenSettings={() => setIsSettingsOpen(true)}
           />
 
-          {/* Quick Stats Grid */}
+          {/* Statistics Horizontal Scrollable Ribbon */}
           <StatsGrid stats={stats} />
-
-          {/* Account & App Preferences List */}
-          <PreferencesSection
-            profileUser={profileUser}
-            themeMode={themeMode}
-            onToggleNotifications={handleToggleNotifications}
-            onCycleAppearance={cycleAppearance}
-            onClearHistory={handleClearHistory}
-            onDeleteAccount={handleDeleteUserAccount}
-          />
-
-          {/* Authentication Action: Log Out */}
-          <YStack mt="$4">
-            <Button
-              size="$4"
-              variant="outlined"
-              borderColor="$red8"
-              color="$red10"
-              hoverStyle={{ bg: "$red2", borderColor: "$red10" }}
-              pressStyle={{ bg: "$red3" }}
-              fontWeight="bold"
-              borderRadius="$4"
-              onPress={handleLogoutPress}
-              w="100%"
-            >
-              Log Out
-            </Button>
-          </YStack>
 
         </YStack>
       </ScrollView>
+
+      {/* Settings & Preferences Modal Sheet */}
+      <PreferencesSection
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        profileUser={profileUser}
+        themeMode={themeMode}
+        onToggleNotifications={handleToggleNotifications}
+        onCycleAppearance={cycleAppearance}
+        onClearHistory={handleClearHistory}
+        onDeleteAccount={handleDeleteUserAccount}
+        onLogout={handleLogoutPress}
+      />
     </YStack>
   );
 }

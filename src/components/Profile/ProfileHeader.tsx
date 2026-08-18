@@ -43,6 +43,7 @@ interface ProfileHeaderProps {
   setSelectedAvatar: (avatar: string) => void;
   updating: boolean;
   onUpdateProfileDetails: () => void;
+  onOpenSettings: () => void;
 }
 
 export default function ProfileHeader({
@@ -56,51 +57,95 @@ export default function ProfileHeader({
   setSelectedAvatar,
   updating,
   onUpdateProfileDetails,
+  onOpenSettings,
 }: ProfileHeaderProps) {
   const levelTitle = getLevelTitle(stats.current_level);
 
   return (
-    <YStack ai="center" gap="$4">
-      <YStack pos="relative">
-        <Avatar circular size={110} bg="$purple3" borderWidth={2} borderColor="$purple10" style={styles.avatarShadow}>
-          {profileUser.avatar_url ? (
-            <Image
-              source={{ uri: profileUser.avatar_url }}
-              style={styles.avatarImage}
-              contentFit="cover"
-            />
-          ) : (
-            <Avatar.Fallback bc="$purple10" jc="center" ai="center">
-              <Text color="white" fow="bold" fos="$8">
-                {profileUser.email.substring(0, 2).toUpperCase()}
+    <YStack w="100%" gap="$4">
+      {/* Top Bar: Profile Avatar & Info on Left, Settings Icon on Right */}
+      <XStack jc="space-between" ai="center" w="100%">
+        {/* Top Left: Avatar + Info */}
+        <XStack ai="center" gap="$3" f={1} pr="$2">
+          <YStack pos="relative">
+            <Avatar circular size={58} bg="$purple3" borderWidth={2} borderColor="$purple10" style={styles.avatarShadow}>
+              {profileUser.avatar_url ? (
+                <Image
+                  source={{ uri: profileUser.avatar_url }}
+                  style={styles.avatarImage}
+                  contentFit="cover"
+                />
+              ) : (
+                <Avatar.Fallback bc="$purple10" jc="center" ai="center">
+                  <Text color="white" fow="bold" fos="$5">
+                    {profileUser.email.substring(0, 2).toUpperCase()}
+                  </Text>
+                </Avatar.Fallback>
+              )}
+            </Avatar>
+
+            {!isEditing && (
+              <Button
+                pos="absolute"
+                bottom={-2}
+                right={-2}
+                size="$1"
+                circular
+                theme="purple"
+                bg="$purple10"
+                onPress={() => {
+                  setEditName(profileUser.name || "");
+                  setSelectedAvatar(profileUser.avatar_url || "");
+                  setIsEditing(true);
+                }}
+                style={styles.editButton}
+              >
+                ✏️
+              </Button>
+            )}
+          </YStack>
+
+          <YStack f={1} gap="$0.5">
+            <XStack ai="center" gap="$2" fw="wrap">
+              <Text fow="800" fos="$5" color="$color" numberOfLines={1}>
+                {profileUser.name || "Nexton User"}
               </Text>
-            </Avatar.Fallback>
-          )}
-        </Avatar>
+              <XStack bg="$purple10" px="$2" py="$0.5" borderRadius="$4" style={styles.badgeShadow}>
+                <Text fow="800" fos="$1" color="white" letterSpacing={0.5}>
+                  Lv. {stats.current_level}
+                </Text>
+              </XStack>
+            </XStack>
 
-        {!isEditing && (
-          <Button
-            pos="absolute"
-            bottom={-4}
-            right={-4}
-            size="$2"
-            circular
-            theme="purple"
-            bg="$purple10"
-            onPress={() => {
-              setEditName(profileUser.name || "");
-              setSelectedAvatar(profileUser.avatar_url || "");
-              setIsEditing(true);
-            }}
-            style={styles.editButton}
-          >
-            ✏️
-          </Button>
-        )}
-      </YStack>
+            <Text color="$purple10" fow="600" fos="$2" numberOfLines={1}>
+              {levelTitle}
+            </Text>
+            
+            <Text color="$slate9" fos="$1" numberOfLines={1}>
+              {profileUser.email}
+            </Text>
+          </YStack>
+        </XStack>
 
-      {isEditing ? (
-        <YStack w="100%" gap="$3" bg="$backgroundElement" p="$4" borderRadius="$4" borderWidth={1} borderColor="$borderColor">
+        {/* Top Right: Setting Icon Button */}
+        <Button
+          circular
+          size="$4"
+          bg="$backgroundElement"
+          borderWidth={1}
+          borderColor="$borderColor"
+          hoverStyle={{ bg: "$purple2", borderColor: "$purple8" }}
+          pressStyle={{ scale: 0.92 }}
+          onPress={onOpenSettings}
+          style={styles.settingButton}
+        >
+          <Text fos="$5">⚙️</Text>
+        </Button>
+      </XStack>
+
+      {/* Edit Profile Details Inline Box */}
+      {isEditing && (
+        <YStack w="100%" gap="$3" bg="$backgroundElement" p="$4" borderRadius="$4" borderWidth={1} borderColor="$borderColor" mt="$1">
           <Text fow="bold" fos="$2" color="$color">Edit Display Name</Text>
           <Input
             bg="$background"
@@ -146,20 +191,6 @@ export default function ProfileHeader({
             </Button>
           </XStack>
         </YStack>
-      ) : (
-        <YStack ai="center" gap="$2">
-          <Text fow="bold" fos="$7" color="$color" ta="center">
-            {profileUser.name || "Nexton User"}
-          </Text>
-          <Text color="$slate9" fos="$3" ta="center">
-            {profileUser.email}
-          </Text>
-          <XStack bg="$purple10" px="$3" py="$1" borderRadius="$5" mt="$1" style={styles.badgeShadow}>
-            <Text fow="800" fos="$2" color="white" letterSpacing={0.5}>
-              Lv. {stats.current_level} {levelTitle}
-            </Text>
-          </XStack>
-        </YStack>
       )}
     </YStack>
   );
@@ -168,16 +199,16 @@ export default function ProfileHeader({
 const styles = StyleSheet.create({
   avatarShadow: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   badgeShadow: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
-    shadowRadius: 3,
+    shadowRadius: 2,
     elevation: 2,
   },
   avatarImage: {
@@ -185,20 +216,27 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   presetImage: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
   },
   presetsScroll: {
-    gap: 12,
+    gap: 10,
     paddingVertical: 4,
   },
   editButton: {
-    width: 32,
-    height: 32,
-    minHeight: 32,
-    minWidth: 32,
+    width: 24,
+    height: 24,
+    minHeight: 24,
+    minWidth: 24,
     padding: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  settingButton: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
 });
