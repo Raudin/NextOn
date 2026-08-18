@@ -148,12 +148,18 @@ export function registerUnauthorizedCallback(callback: UnauthorizedCallback) {
 }
 
 const getBackendBaseUrls = (): string[] => {
+  const customUrl = process.env.EXPO_PUBLIC_API_URL;
+  const urls: string[] = [];
+
+  if (customUrl) {
+    urls.push(customUrl.replace(/\/$/, ""));
+  }
+
   const hostUri =
     Constants.expoConfig?.hostUri ??
     Constants.manifest2?.launchAsset?.url ??
     "";
   const hostIp = hostUri.split(":")[0];
-  const urls: string[] = [];
 
   if (hostIp && hostIp !== "localhost" && hostIp !== "127.0.0.1") {
     urls.push(`http://${hostIp}:8080`);
