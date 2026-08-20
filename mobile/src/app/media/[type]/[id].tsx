@@ -1,17 +1,19 @@
+import { useAuth } from "@/context/AuthContext";
+import { cache } from "@/lib/cache";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Linking, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
-import { useAuth } from "@/context/AuthContext";
-import { cache } from "@/lib/cache";
 
 import {
   BACKDROP_IMAGE_BASE_URL,
   IMAGE_BASE_URL,
   PROFILE_IMAGE_BASE_URL,
+  addToFavorites,
   addToWatchlist,
+  fetchFavoriteStatus,
   fetchMediaDetails,
   fetchSeasonEpisodes,
   fetchWatchedStatus,
@@ -20,6 +22,7 @@ import {
   markWatched,
   markWatchedBulk,
   mediaTitle,
+  removeFromFavorites,
   removeFromWatchlist,
   unmarkWatched,
   type Episode,
@@ -52,6 +55,8 @@ export default function MediaDetailScreen() {
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [watched, setWatched] = useState(false);
   const [watchedLoading, setWatchedLoading] = useState(false);
+  const [favorited, setFavorited] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "episodes">(
     "overview",
   );
@@ -75,7 +80,11 @@ export default function MediaDetailScreen() {
     if (!dateStr) return false;
     const parts = dateStr.split("-");
     if (parts.length !== 3) return false;
-    const releaseDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    const releaseDate = new Date(
+      Number(parts[0]),
+      Number(parts[1]) - 1,
+      Number(parts[2]),
+    );
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return releaseDate > today;
@@ -122,13 +131,16 @@ export default function MediaDetailScreen() {
     setError(null);
     try {
       if (token) {
-        const [detailsData, watchlist, watchedStatus] = await Promise.all([
-          fetchMediaDetails(params.type, params.id),
-          fetchWatchlist(),
-          fetchWatchedStatus(params.id, params.type),
-        ]);
+        const [detailsData, watchlist, watchedStatus, favoriteStatus] =
+          await Promise.all([
+            fetchMediaDetails(params.type, params.id),
+            fetchWatchlist(),
+            fetchWatchedStatus(params.id, params.type),
+            fetchFavoriteStatus(params.id),
+          ]);
         setDetails(detailsData);
         setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
+        setFavorited(favoriteStatus.favorited ?? false);
         if (isMovie) {
           setWatched(watchedStatus.watched ?? false);
         } else if (watchedStatus.episodes) {
@@ -143,6 +155,7 @@ export default function MediaDetailScreen() {
         setDetails(detailsData);
         setInWatchlist(false);
         setWatched(false);
+        setFavorited(false);
         setWatchedEpisodes(new Set());
       }
     } catch (err: any) {
@@ -157,35 +170,41 @@ export default function MediaDetailScreen() {
     loadAll();
   }, [loadAll, token]);
 
-  const toggleSeason = useCallback(async (seasonNumber: number) => {
-    setExpandedSeasons((prev) => {
-      const next = new Set(prev);
-      if (next.has(seasonNumber)) {
-        next.delete(seasonNumber);
-      } else {
-        next.add(seasonNumber);
-      }
-      return next;
-    });
-
-    if (seasonEpisodes[seasonNumber] || seasonLoading.has(seasonNumber)) {
-      return;
-    }
-
-    setSeasonLoading((prev) => new Set(prev).add(seasonNumber));
-    try {
-      const data = await fetchSeasonEpisodes(params.id, seasonNumber);
-      setSeasonEpisodes((prev) => ({ ...prev, [seasonNumber]: data.episodes }));
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setSeasonLoading((prev) => {
+  const toggleSeason = useCallback(
+    async (seasonNumber: number) => {
+      setExpandedSeasons((prev) => {
         const next = new Set(prev);
-        next.delete(seasonNumber);
+        if (next.has(seasonNumber)) {
+          next.delete(seasonNumber);
+        } else {
+          next.add(seasonNumber);
+        }
         return next;
       });
-    }
-  }, [params.id, seasonEpisodes, seasonLoading]);
+
+      if (seasonEpisodes[seasonNumber] || seasonLoading.has(seasonNumber)) {
+        return;
+      }
+
+      setSeasonLoading((prev) => new Set(prev).add(seasonNumber));
+      try {
+        const data = await fetchSeasonEpisodes(params.id, seasonNumber);
+        setSeasonEpisodes((prev) => ({
+          ...prev,
+          [seasonNumber]: data.episodes,
+        }));
+      } catch (err: any) {
+        setError(err.message || String(err));
+      } finally {
+        setSeasonLoading((prev) => {
+          const next = new Set(prev);
+          next.delete(seasonNumber);
+          return next;
+        });
+      }
+    },
+    [params.id, seasonEpisodes, seasonLoading],
+  );
 
   const toggleWatchlist = async () => {
     if (!token) {
@@ -239,6 +258,31 @@ export default function MediaDetailScreen() {
     }
   };
 
+  const toggleFavorite = async () => {
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
+    if (!details || favoriteLoading) {
+      return;
+    }
+    const next = !favorited;
+    setFavorited(next);
+    setFavoriteLoading(true);
+    try {
+      if (next) {
+        await addToFavorites(details);
+      } else {
+        await removeFromFavorites(details.id);
+      }
+    } catch (err: any) {
+      setFavorited(!next);
+      setError(err.message || String(err));
+    } finally {
+      setFavoriteLoading(false);
+    }
+  };
+
   const openTrailer = () => {
     if (!trailer) return;
     const url = `https://www.youtube.com/watch?v=${trailer.key}`;
@@ -278,7 +322,7 @@ export default function MediaDetailScreen() {
 
         const nextWatched = new Set<string>();
         allEpisodes.forEach((ep) =>
-          nextWatched.add(`${ep.season_number}:${ep.episode_number}`)
+          nextWatched.add(`${ep.season_number}:${ep.episode_number}`),
         );
         setWatchedEpisodes(nextWatched);
         await invalidateMediaCaches();
@@ -568,7 +612,13 @@ export default function MediaDetailScreen() {
                   )}
 
                   {/* Genre bullets + runtime/date */}
-                  <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" w="100%">
+                  <XStack
+                    ai="center"
+                    jc="center"
+                    gap="$2"
+                    flexWrap="wrap"
+                    w="100%"
+                  >
                     {(details.genres ?? []).map((genre, i) => (
                       <XStack key={genre.id} ai="center" gap="$2">
                         {i > 0 && (
@@ -622,16 +672,30 @@ export default function MediaDetailScreen() {
                       f={1}
                       size="$4"
                       borderRadius="$10"
-                      bg="transparent"
+                      bg="rgba(255,255,255,0.15)"
                       color="white"
                       borderWidth={1}
-                      borderColor="rgba(255,255,255,0.4)"
-                      disabled={watchlistLoading || watchedLoading || (inWatchlist && isUnreleased)}
+                      borderColor="rgba(255,255,255,0.2)"
+                      disabled={
+                        watchlistLoading ||
+                        watchedLoading ||
+                        (inWatchlist && isUnreleased)
+                      }
                       onPress={handleWatchlistButtonPress}
-                      iconAfter={(watchlistLoading || watchedLoading) ? <Spinner size="small" color="white" /> : undefined}
+                      iconAfter={
+                        watchlistLoading || watchedLoading ? (
+                          <Spinner size="small" color="white" />
+                        ) : undefined
+                      }
                       h={44}
                     >
-                      {!inWatchlist ? "+ Watchlist" : isUnreleased ? "Unreleased" : isSeen ? "✓ Seen" : "✔ Mark as seen"}
+                      {!inWatchlist
+                        ? "+ Watchlist"
+                        : isUnreleased
+                          ? "Unreleased"
+                          : isSeen
+                            ? "✓ Seen"
+                            : "✔ Mark as seen"}
                     </Button>
 
                     {trailer ? (
@@ -651,26 +715,36 @@ export default function MediaDetailScreen() {
                       </Button>
                     ) : null}
 
-                    {isMovie && (
-                      <Button
-                        size="$4"
-                        borderRadius="$10"
-                        w={44}
-                        h={44}
-                        bg={watched ? "rgba(255, 50, 50, 0.2)" : "rgba(255,255,255,0.1)"}
-                        borderWidth={1}
-                        borderColor={watched ? "rgba(255, 50, 50, 0.5)" : "rgba(255,255,255,0.2)"}
-                        disabled={watchedLoading || isUnreleased}
-                        onPress={toggleWatched}
-                        p="$0"
-                        jc="center"
-                        ai="center"
+                    <Button
+                      size="$4"
+                      borderRadius="$10"
+                      w={44}
+                      h={44}
+                      bg={
+                        favorited
+                          ? "rgba(255, 50, 50, 0.2)"
+                          : "rgba(255,255,255,0.1)"
+                      }
+                      borderWidth={1}
+                      borderColor={
+                        favorited
+                          ? "rgba(255, 50, 50, 0.5)"
+                          : "rgba(255,255,255,0.2)"
+                      }
+                      disabled={favoriteLoading}
+                      onPress={toggleFavorite}
+                      p="$0"
+                      jc="center"
+                      ai="center"
+                    >
+                      <Text
+                        color={favorited ? "rgb(255, 80, 80)" : "white"}
+                        fos="$5"
+                        fow="700"
                       >
-                        <Text color={watched ? "rgb(255, 80, 80)" : "white"} fos="$5" fow="700">
-                          {watched ? "♥" : "♡"}
-                        </Text>
-                      </Button>
-                    )}
+                        {favorited ? "♥" : "♡"}
+                      </Text>
+                    </Button>
                   </XStack>
                 </YStack>
               </YStack>
@@ -975,8 +1049,18 @@ function EpisodeRowListItem({
         const monthNum = parseInt(parts[1], 10);
         const day = parseInt(parts[2], 10);
         const months = [
-          "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
         ];
         const month = months[monthNum - 1] || "";
         return `${month} ${day}, ${year}`;
@@ -1006,7 +1090,13 @@ function EpisodeRowListItem({
         onPress={onPress}
       >
         {/* Left: Thumbnail Still Image */}
-        <YStack w={120} h={68} borderRadius={8} overflow="hidden" bg="$backgroundElement">
+        <YStack
+          w={120}
+          h={68}
+          borderRadius={8}
+          overflow="hidden"
+          bg="$backgroundElement"
+        >
           {episode.still_path ? (
             <Image
               source={{
@@ -1018,7 +1108,10 @@ function EpisodeRowListItem({
           ) : showDetails.backdrop_path ? (
             <Image
               source={{
-                uri: imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL),
+                uri: imageUrl(
+                  showDetails.backdrop_path,
+                  BACKDROP_IMAGE_BASE_URL,
+                ),
               }}
               style={{ width: "100%", height: "100%" }}
               contentFit="cover"
@@ -1033,14 +1126,22 @@ function EpisodeRowListItem({
             />
           ) : (
             <YStack f={1} ai="center" jc="center">
-              <Text color="$color" opacity={0.4} fos="$1">No image</Text>
+              <Text color="$color" opacity={0.4} fos="$1">
+                No image
+              </Text>
             </YStack>
           )}
         </YStack>
 
         {/* Middle: Content Stack */}
         <YStack f={1} gap="$1">
-          <Text color="$color" opacity={0.5} fos="$2" fow="600" letterSpacing={0.5}>
+          <Text
+            color="$color"
+            opacity={0.5}
+            fos="$2"
+            fow="600"
+            letterSpacing={0.5}
+          >
             {episodeCode}
           </Text>
           <Text color="$color" fow="700" fos="$4" numberOfLines={1}>
@@ -1059,7 +1160,11 @@ function EpisodeRowListItem({
             if (!episode.air_date) return false;
             const parts = episode.air_date.split("-");
             if (parts.length !== 3) return false;
-            const airDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            const airDate = new Date(
+              Number(parts[0]),
+              Number(parts[1]) - 1,
+              Number(parts[2]),
+            );
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             return airDate > today;
@@ -1086,7 +1191,9 @@ function EpisodeRowListItem({
                 jc="center"
               >
                 {epUnreleased && (
-                  <Text color="$color" fos="$1">🔒</Text>
+                  <Text color="$color" fos="$1">
+                    🔒
+                  </Text>
                 )}
               </YStack>
             </TouchableOpacity>
@@ -1094,9 +1201,7 @@ function EpisodeRowListItem({
         })()}
       </XStack>
 
-      {!isLast && (
-        <YStack height={1} bg="$borderColor" opacity={0.2} />
-      )}
+      {!isLast && <YStack height={1} bg="$borderColor" opacity={0.2} />}
     </YStack>
   );
 }

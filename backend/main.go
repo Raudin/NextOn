@@ -58,6 +58,12 @@ func main() {
 	r.GET("/api/watchlist", AuthMiddleware(), handleGetWatchlist)
 	r.DELETE("/api/watchlist/:id", AuthMiddleware(), handleDeleteWatchlist)
 
+	// Favorites (Private, authenticated)
+	r.POST("/api/favorites", AuthMiddleware(), handleAddFavorite)
+	r.GET("/api/favorites", AuthMiddleware(), handleGetFavorites)
+	r.DELETE("/api/favorites/:id", AuthMiddleware(), handleDeleteFavorite)
+	r.GET("/api/favorites/status", AuthMiddleware(), handleFavoriteStatus)
+
 	// Profile (Private, authenticated)
 	r.GET("/api/profile", AuthMiddleware(), handleGetProfile)
 	r.PUT("/api/profile", AuthMiddleware(), handleUpdateProfile)

@@ -244,7 +244,12 @@ export async function apiFetch<T>(
           // ignore
         }
 
-        if (isUnauthorized && authToken && !path.includes("/api/auth/login") && !path.includes("/api/auth/signup")) {
+        if (
+          isUnauthorized &&
+          authToken &&
+          !path.includes("/api/auth/login") &&
+          !path.includes("/api/auth/signup")
+        ) {
           if (unauthorizedCallback) {
             unauthorizedCallback();
           }
@@ -265,7 +270,9 @@ export async function apiFetch<T>(
         error?.message?.toLowerCase().includes("cancel");
 
       if (isAbort) {
-        const abortErr = new Error(error?.message || "The operation was aborted.");
+        const abortErr = new Error(
+          error?.message || "The operation was aborted.",
+        );
         abortErr.name = "AbortError";
         throw abortErr;
       }
@@ -276,7 +283,7 @@ export async function apiFetch<T>(
   }
 
   throw new Error(
-    lastError || `Could not reach the backend. Tried: ${urls.join(", ")}`
+    lastError || `Could not reach the backend. Tried: ${urls.join(", ")}`,
   );
 }
 
@@ -299,6 +306,10 @@ export const signupUser = (payload: any) =>
     body: JSON.stringify(payload),
   });
 
+export interface FavoriteStatusResponse {
+  favorited: boolean;
+}
+
 export const fetchWatchlist = (options?: {
   userId?: string;
   filterWatched?: boolean;
@@ -318,6 +329,20 @@ export const addToWatchlist = (item: TMDBMedia) =>
 
 export const removeFromWatchlist = (id: number) =>
   apiFetch<void>(`/api/watchlist/${id}`, { method: "DELETE" });
+
+export const fetchFavorites = () => apiFetch<TMDBMedia[]>("/api/favorites");
+
+export const addToFavorites = (item: TMDBMedia) =>
+  apiFetch<TMDBMedia>("/api/favorites", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+
+export const removeFromFavorites = (id: number) =>
+  apiFetch<void>(`/api/favorites/${id}`, { method: "DELETE" });
+
+export const fetchFavoriteStatus = (mediaId: string | number) =>
+  apiFetch<FavoriteStatusResponse>(`/api/favorites/status?media_id=${mediaId}`);
 
 export const fetchMediaDetails = (type: string, id: string | number) =>
   apiFetch<MediaDetails>(`/api/media/${type}/${id}`);
@@ -365,8 +390,7 @@ export const fetchEpisodeDetails = (
     `/api/media/tv/${seriesId}/season/${season}/episode/${episode}`,
   );
 
-export const fetchUserProfile = () =>
-  apiFetch<ProfileResponse>("/api/profile");
+export const fetchUserProfile = () => apiFetch<ProfileResponse>("/api/profile");
 
 export const updateUserProfile = (payload: {
   name?: string;
