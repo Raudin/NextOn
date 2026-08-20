@@ -31,6 +31,21 @@ type WatchlistItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type FavoriteItem struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	UserID       uint      `gorm:"not null;uniqueIndex:idx_user_favorite" json:"user_id"`
+	MediaID      int64     `gorm:"not null;uniqueIndex:idx_user_favorite" json:"media_id"`
+	Title        string    `json:"title,omitempty"`
+	Name         string    `json:"name,omitempty"`
+	PosterPath   string    `json:"poster_path"`
+	BackdropPath string    `json:"backdrop_path"`
+	VoteAverage  float64   `json:"vote_average"`
+	MediaType    string    `json:"media_type,omitempty"`
+	ReleaseDate  string    `json:"release_date,omitempty"`
+	FirstAirDate string    `json:"first_air_date,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type WatchedItem struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	UserID        uint      `gorm:"not null;uniqueIndex:idx_user_watched" json:"user_id"`

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -10,14 +11,19 @@ import (
 var db *gorm.DB
 
 func initDB() {
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "nexton.db"
+	}
+
 	var err error
-	db, err = gorm.Open(sqlite.Open("nexton.db"), &gorm.Config{})
+	db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect database: %v", err)
 	}
 
 	// Auto Migrate
-	err = db.AutoMigrate(&User{}, &WatchlistItem{}, &WatchedItem{})
+	err = db.AutoMigrate(&User{}, &WatchlistItem{}, &WatchedItem{}, &FavoriteItem{})
 	if err != nil {
 		log.Fatalf("Failed to auto migrate database: %v", err)
 	}

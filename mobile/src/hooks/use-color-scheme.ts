@@ -3,13 +3,11 @@ import { useAuth } from "@/context/AuthContext";
 
 export function useColorScheme() {
   const systemScheme = useRNColorScheme();
-  try {
-    const { themeMode } = useAuth();
-    if (themeMode === "system") {
-      return systemScheme === "dark" ? "dark" : "light";
-    }
-    return themeMode;
-  } catch {
+  const auth = useAuth();
+  const themeMode = auth?.themeMode ?? "system";
+
+  if (themeMode === "system") {
     return systemScheme === "dark" ? "dark" : "light";
   }
+  return themeMode;
 }

@@ -1,6 +1,6 @@
 # Nexton 🎬
 
-Nexton is a comprehensive movie and TV show discovery, tracking, and watchlist application. It is structured as a monorepo consisting of a high-performance **Go (Gin) backend** and a modern **React Native/Expo frontend** powered by Tamagui.
+Nexton is a comprehensive movie and TV show discovery, tracking, and watchlist application. It is structured as a monorepo consisting of a high-performance **Go (Gin) backend** and a modern **React Native/Expo mobile app** powered by Tamagui.
 
 ---
 
@@ -20,65 +20,67 @@ Nexton is a comprehensive movie and TV show discovery, tracking, and watchlist a
 
 ```text
 nexton/
-├── backend/            # Go Gin web backend (GORM, SQLite)
-└── src/                # React Native Expo frontend (Expo Router, Tamagui)
+├── backend/            # Go Gin web backend (GORM, SQLite, Dokploy Dockerfile)
+└── mobile/             # React Native Expo mobile app (Expo Router, Tamagui)
 ```
 
 ---
 
-## ⚙️ Backend Setup
+## ⚙️ Backend Setup & Deployment
 
 The Nexton backend is built with Go, the Gin Web Framework, GORM, and SQLite.
 
-### Requirements
-- Go (1.20+)
-
-### Quick Start
+### Local Quick Start
 1. Navigate into the backend directory:
    ```bash
    cd backend
    ```
-2. Run the server using the high-fidelity dummy TMDB mock data fallback:
+2. Run the server:
    ```bash
-   TMDB_API_KEY=dummy go run main.go
+   TMDB_API_KEY=dummy go run .
    ```
    *Note: If you have a valid TMDB API key, replace `dummy` with your actual API key.*
 
-### Configuration Details
-- **Port**: Runs on `http://localhost:8080` by default.
-- **Database**: Uses SQLite, writing to `nexton.db`.
-- **Security**: Endpoint access is secured via JWT. Passwords are safely hashed using bcrypt.
+### Deployment to VPS (Dokploy)
+The `backend/` directory contains a multi-stage `Dockerfile` ready for deployment on Dokploy / VPS:
+- **Environment Variables**:
+  - `PORT`: Port to listen on (default `8080`)
+  - `DB_PATH`: Path to SQLite DB file (default `/data/nexton.db`)
+  - `TMDB_API_KEY`: TMDB API key or `dummy`
+  - `JWT_SECRET`: Secret key for JWT token signing
+- **Persistent Storage**: Mount a volume at `/data` in Dokploy so `nexton.db` persists across deployments.
 
 ---
 
-## 📱 Frontend Setup
+## 📱 Mobile App Setup
 
-The Nexton frontend is built using Expo, Expo Router, Tamagui, and React Native Reanimated, tailored for universal platform delivery (iOS, Android, and Web).
+The Nexton mobile frontend is built using Expo, Expo Router, Tamagui, and React Native Reanimated, tailored for native application delivery (iOS and Android).
 
 ### Requirements
 - Node.js (v18+)
 - `pnpm` (recommended package manager)
 
 ### Quick Start
-1. Install dependencies from the root directory:
+1. Navigate into the mobile directory and install dependencies:
    ```bash
+   cd mobile
    pnpm install
    ```
-2. Start the Metro Bundler and run in React Native Web mode:
+2. Start the interactive Expo CLI:
    ```bash
-   pnpm run web
+   pnpm run start
    ```
-   *Alternatively, run `pnpm run start` to open the interactive Expo CLI for iOS simulators/Android emulators.*
+   *Alternatively, run `pnpm run android`, `pnpm run ios`, or `pnpm run web`.*
 
-### Technical Highlights
-- **Build Tooling**: Metro Bundler runs on port `8081`.
-- **Styling**: Utilizes **Tamagui** and Tailwind/global CSS for ultra-responsive, fluid components and layouts.
-- **Navigation**: Uses **Expo Router** for file-based native routing.
-- **Token Management**: Utilizes `expo-secure-store` on native devices to securely store user authentication JWTs, falling back gracefully to `localStorage` on web platforms.
+### Connecting to Deployed Backend
+Set the `EXPO_PUBLIC_API_URL` environment variable to your deployed VPS backend URL:
+```bash
+EXPO_PUBLIC_API_URL=https://api.yourdomain.com pnpm run start
+```
 
 ---
 
 ## 🛠️ Development & Support
 
 - Refer to `AGENTS.md` for specific Expo versioning guidelines (v57.0.0).
-- Run `pnpm run lint` or `npx expo lint` to ensure code adheres to the template standards.
+- Run `pnpm run lint` inside `mobile/` to ensure code adheres to the template standards.
