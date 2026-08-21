@@ -16,6 +16,25 @@ Nexton is a comprehensive movie and TV show discovery, tracking, and watchlist a
 
 ---
 
+## 📡 How the Mobile App Communicates with the Backend
+
+The React Native mobile app communicates with the Go backend via **HTTP/REST endpoints** delivering standard JSON responses.
+
+### Key Architecture Details:
+1. **API Client (`mobile/src/lib/media-api.ts`)**:
+   - All network requests are routed through `apiFetch<T>(path, init)`.
+   - On request execution, `apiFetch` dynamically constructs backend URLs using the base URL resolution logic.
+2. **Environment Variable Configuration (`EXPO_PUBLIC_API_URL`)**:
+   - Expo automatically exposes any environment variable prefixed with `EXPO_PUBLIC_` to the client bundle.
+   - When `EXPO_PUBLIC_API_URL` is configured in `mobile/.env` or passed via environment variables (e.g. `EXPO_PUBLIC_API_URL=https://api.yourdomain.com`), the app prioritizes this URL for all backend API calls.
+   - If `EXPO_PUBLIC_API_URL` is unset, `getBackendBaseUrls()` falls back to host IP discovery and standard development ports (`http://<host-ip>:8080`, `http://10.0.2.2:8080` for Android emulator, or `http://localhost:8080`).
+3. **Authentication & JWT Token**:
+   - Upon user login or registration (`/api/auth/login` or `/api/auth/signup`), the backend returns a JWT session token.
+   - The token is saved in persistent storage (via `expo-secure-store` or `localStorage` fallback on web) and attached as a `Authorization: Bearer <token>` header to all subsequent API calls.
+   - If an API request returns `401 Unauthorized`, a global callback clears the session and safely redirects the user to the auth screen.
+
+---
+
 ## 📁 Repository Structure
 
 ```text
@@ -30,52 +49,64 @@ nexton/
 
 The Nexton backend is built with Go, the Gin Web Framework, GORM, and SQLite.
 
-### Local Quick Start
-1. Navigate into the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Run the server:
-   ```bash
-   TMDB_API_KEY=dummy go run .
-   ```
-   *Note: If you have a valid TMDB API key, replace `dummy` with your actual API key.*
+### 1. Environment Configuration (`backend/.env.example`)
+Create a `.env` file or export environment variables on your host/server:
+```env
+PORT=8080
+DB_PATH=/data/nexton.db
+TMDB_API_KEY=your_tmdb_api_key_or_dummy
+JWT_SECRET=your_jwt_secret_key
+```
 
-### Deployment to VPS (Dokploy)
-The `backend/` directory contains a multi-stage `Dockerfile` ready for deployment on Dokploy / VPS:
+### 2. Local Quick Start
+```bash
+cd backend
+TMDB_API_KEY=dummy go run .
+```
+
+### 3. Deployment to VPS (e.g., Dokploy / Docker)
+The `backend/` directory contains a multi-stage `Dockerfile` ready for deployment:
 - **Environment Variables**:
   - `PORT`: Port to listen on (default `8080`)
   - `DB_PATH`: Path to SQLite DB file (default `/data/nexton.db`)
   - `TMDB_API_KEY`: TMDB API key or `dummy`
   - `JWT_SECRET`: Secret key for JWT token signing
-- **Persistent Storage**: Mount a volume at `/data` in Dokploy so `nexton.db` persists across deployments.
+- **Persistent Storage**: Mount a persistent volume at `/data` so `nexton.db` persists across container redeployments.
 
 ---
 
-## 📱 Mobile App Setup
+## 📱 Mobile App Environment & Setup
 
-The Nexton mobile frontend is built using Expo, Expo Router, Tamagui, and React Native Reanimated, tailored for native application delivery (iOS and Android).
+The Nexton mobile frontend is built using Expo, Expo Router, Tamagui, and React Native Reanimated.
 
-### Requirements
-- Node.js (v18+)
-- `pnpm` (recommended package manager)
-
-### Quick Start
-1. Navigate into the mobile directory and install dependencies:
-   ```bash
-   cd mobile
-   pnpm install
-   ```
-2. Start the interactive Expo CLI:
-   ```bash
-   pnpm run start
-   ```
-   *Alternatively, run `pnpm run android`, `pnpm run ios`, or `pnpm run web`.*
-
-### Connecting to Deployed Backend
-Set the `EXPO_PUBLIC_API_URL` environment variable to your deployed VPS backend URL:
+### 1. Configure Environment Variables
+Copy `.env.example` to `.env` inside the `mobile` directory:
 ```bash
-EXPO_PUBLIC_API_URL=https://api.yourdomain.com pnpm run start
+cd mobile
+cp .env.example .env
+```
+Edit `mobile/.env` and update `EXPO_PUBLIC_API_URL` to point to your live backend endpoint:
+```env
+EXPO_PUBLIC_API_URL=https://api.yourdomain.com
+```
+
+### 2. Install Dependencies & Quick Start
+```bash
+cd mobile
+pnpm install
+pnpm run start
+```
+*Alternatively, run `pnpm run android`, `pnpm run ios`, or `pnpm run web`.*
+
+### 3. Building for Production / Live Usage
+When building native apps (using EAS Build or local native builds) or web distributions, Expo embeds `EXPO_PUBLIC_API_URL` from `.env` into the bundle:
+```bash
+# Build Expo Web distribution
+cd mobile
+EXPO_PUBLIC_API_URL=https://api.yourdomain.com pnpm run web
+
+# Or build native apps using EAS
+eas build --platform all
 ```
 
 ---
