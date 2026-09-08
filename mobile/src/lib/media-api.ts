@@ -152,7 +152,14 @@ const getBackendBaseUrls = (): string[] => {
   const urls: string[] = [];
 
   if (customUrl) {
-    urls.push(customUrl.replace(/\/$/, ""));
+    const normalizedUrl = /^https?:\/\//i.test(customUrl)
+      ? customUrl
+      : `https://${customUrl}`;
+
+    // A configured API URL is authoritative. Falling back to local HTTP
+    // endpoints in a production build causes Android to reject the request
+    // as cleartext traffic (for example, http://10.0.2.2:8080).
+    return [normalizedUrl.replace(/\/$/, "")];
   }
 
   const hostUri =

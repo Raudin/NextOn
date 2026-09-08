@@ -79,7 +79,7 @@ export default function DiscoverScreen() {
       // Only show full screen error if we don't have cached data to show
       if (!cachedData) {
         setError(
-          `${err.message || String(err)}. Make sure the Go server is running on port 8080.`,
+          `${err.message || String(err)}. Check your connection and try again.`,
         );
       } else {
         console.warn("Silent discover background revalidation failed:", err);
