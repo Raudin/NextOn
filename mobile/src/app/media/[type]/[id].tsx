@@ -1,5 +1,5 @@
 import { useAuth } from "@/context/AuthContext";
-import { cache } from "@/lib/cache";
+import { invalidateMediaCaches } from "@/lib/cache";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -29,20 +29,6 @@ import {
   type MediaDetails,
   type Season,
 } from "@/lib/media-api";
-
-const invalidateMediaCaches = async () => {
-  try {
-    await Promise.all([
-      cache.delete("watchlist_items"),
-      cache.delete("watchlist_show_progress"),
-      cache.delete("home_watchlist_items"),
-      cache.delete("home_watched_history"),
-      cache.delete("discover_watchlist_ids"),
-    ]);
-  } catch (err) {
-    console.warn("Failed to invalidate media caches:", err);
-  }
-};
 
 export default function MediaDetailScreen() {
   const router = useRouter();

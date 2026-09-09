@@ -236,7 +236,10 @@ export async function apiFetch<T>(
       const response = await fetch(url, {
         ...init,
         headers,
-        signal: init?.signal ?? AbortSignal.timeout(6000),
+        // Background revalidations aggregate several server-side TMDB lookups,
+        // so allow well above the old 6s default to avoid aborting requests
+        // that are still legitimately working.
+        signal: init?.signal ?? AbortSignal.timeout(20000),
       });
       if (!response.ok) {
         // Parse error payload from backend if available

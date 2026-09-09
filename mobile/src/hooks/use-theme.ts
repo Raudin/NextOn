@@ -5,10 +5,14 @@
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/context/AuthContext';
 
 export function useTheme() {
   const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? 'dark' : 'light';
+  const { themeMode } = useAuth();
+  const theme = themeMode === 'system'
+    ? (scheme === 'dark' ? 'dark' : 'light')
+    : themeMode;
 
   return Colors[theme];
 }

@@ -194,22 +194,17 @@ func handleWatchedStatus(c *gin.Context) {
 		return
 	}
 
-	items := getUserWatched(userUID)
+	// Scope the query to just this media row instead of loading (and scanning)
+	// the user's entire watch history for every status check.
+	items := getUserWatchedForMedia(userUID, mediaID, mediaType)
 	if mediaType == "movie" {
-		watched := false
-		for _, item := range items {
-			if item.MediaID == mediaID && item.MediaType == "movie" {
-				watched = true
-				break
-			}
-		}
-		c.JSON(http.StatusOK, gin.H{"watched": watched})
+		c.JSON(http.StatusOK, gin.H{"watched": len(items) > 0})
 		return
 	}
 
 	episodes := []gin.H{}
 	for _, item := range items {
-		if item.MediaID == mediaID && item.MediaType == "tv" && item.SeasonNumber != nil && item.EpisodeNumber != nil {
+		if item.SeasonNumber != nil && item.EpisodeNumber != nil {
 			episodes = append(episodes, gin.H{"season": *item.SeasonNumber, "episode": *item.EpisodeNumber})
 		}
 	}
@@ -221,17 +216,18 @@ type tmdbTVSummary struct {
 	Status           string `json:"status"`
 }
 
-func isWatchlistItemFullyWatched(userID uint, item TMDBMedia) bool {
-	mediaType := item.MediaType
-	if mediaType == "" {
-		if item.Title != "" {
-			mediaType = "movie"
-		} else {
-			mediaType = "tv"
-		}
+func watchlistMediaType(item TMDBMedia) string {
+	if item.MediaType != "" {
+		return item.MediaType
 	}
+	if item.Title != "" {
+		return "movie"
+	}
+	return "tv"
+}
 
-	watched := getUserWatched(userID)
+func isWatchlistItemFullyWatched(item TMDBMedia, watched []WatchedItem) bool {
+	mediaType := watchlistMediaType(item)
 
 	if mediaType == "movie" {
 		for _, w := range watched {
@@ -319,6 +315,14 @@ func addOrUpdateWatched(userID uint, item WatchedItem) {
 func getUserWatched(userID uint) []WatchedItem {
 	var items []WatchedItem
 	db.Where("user_id = ?", userID).Find(&items)
+	return items
+}
+
+// getUserWatchedForMedia returns only the user's watched rows for one piece of
+// media (instead of their whole history), which is all a status check needs.
+func getUserWatchedForMedia(userID uint, mediaID int64, mediaType string) []WatchedItem {
+	var items []WatchedItem
+	db.Where("user_id = ? AND media_id = ? AND media_type = ?", userID, mediaID, mediaType).Find(&items)
 	return items
 }
 

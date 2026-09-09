@@ -1,16 +1,8 @@
 import React from "react";
 import { StyleSheet } from "react-native";
 import { Image } from "expo-image";
-import {
-  Avatar,
-  Button,
-  Input,
-  ScrollView,
-  Spinner,
-  Text,
-  XStack,
-  YStack,
-} from "tamagui";
+import { SymbolView } from "expo-symbols";
+import { Avatar, Button, Input, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { type User, type ProfileStats } from "@/lib/media-api";
 
 const AVATAR_PRESETS = [
@@ -63,89 +55,71 @@ export default function ProfileHeader({
 
   return (
     <YStack w="100%" gap="$4">
-      {/* Top Bar: Profile Avatar & Info on Left, Settings Icon on Right */}
-      <XStack jc="space-between" ai="center" w="100%">
-        {/* Top Left: Avatar + Info */}
-        <XStack ai="center" gap="$3" f={1} pr="$2">
-          <YStack pos="relative">
-            <Avatar circular size={58} bg="$purple3" borderWidth={2} borderColor="$purple10" style={styles.avatarShadow}>
-              {profileUser.avatar_url ? (
-                <Image
-                  source={{ uri: profileUser.avatar_url }}
-                  style={styles.avatarImage}
-                  contentFit="cover"
-                />
-              ) : (
-                <Avatar.Fallback bc="$purple10" jc="center" ai="center">
-                  <Text color="white" fow="bold" fos="$5">
-                    {profileUser.email.substring(0, 2).toUpperCase()}
-                  </Text>
-                </Avatar.Fallback>
-              )}
-            </Avatar>
-
-            {!isEditing && (
-              <Button
-                pos="absolute"
-                bottom={-2}
-                right={-2}
-                size="$1"
-                circular
-                theme="purple"
-                bg="$purple10"
-                onPress={() => {
-                  setEditName(profileUser.name || "");
-                  setSelectedAvatar(profileUser.avatar_url || "");
-                  setIsEditing(true);
-                }}
-                style={styles.editButton}
-              >
-                ✏️
-              </Button>
-            )}
-          </YStack>
-
-          <YStack f={1} gap="$0.5">
-            <XStack ai="center" gap="$2" fw="wrap">
-              <Text fow="800" fos="$5" color="$color" numberOfLines={1}>
-                {profileUser.name || "Nexton User"}
-              </Text>
-              <XStack bg="$purple10" px="$2" py="$0.5" borderRadius="$4" style={styles.badgeShadow}>
-                <Text fow="800" fos="$1" color="white" letterSpacing={0.5}>
-                  Lv. {stats.current_level}
-                </Text>
-              </XStack>
-            </XStack>
-
-            <Text color="$purple10" fow="600" fos="$2" numberOfLines={1}>
-              {levelTitle}
-            </Text>
-            
-            <Text color="$slate9" fos="$1" numberOfLines={1}>
-              {profileUser.email}
-            </Text>
-          </YStack>
-        </XStack>
-
-        {/* Top Right: Setting Icon Button */}
+      <XStack jc="space-between" ai="flex-start" w="100%">
+        <YStack gap="$1" f={1}>
+          <Text fow="800" fos="$9" color="$color" letterSpacing={-0.4}>Profile</Text>
+          <Text color="$color" opacity={0.55} fos="$2">Your viewing journey, all in one place</Text>
+        </YStack>
         <Button
           circular
           size="$4"
           bg="$backgroundElement"
           borderWidth={1}
           borderColor="$borderColor"
-          hoverStyle={{ bg: "$purple2", borderColor: "$purple8" }}
-          pressStyle={{ scale: 0.92 }}
           onPress={onOpenSettings}
-          style={styles.settingButton}
+          accessibilityLabel="Open settings"
+          pressStyle={{ opacity: 0.65, scale: 0.96 }}
         >
-          <Text fos="$5">⚙️</Text>
+          <SymbolView name={{ ios: "gearshape", android: "settings", web: "settings" }} size={20} tintColor="#6E6E73" />
         </Button>
       </XStack>
 
-      {/* Edit Profile Details Inline Box */}
+      <XStack ai="center" gap="$3" w="100%">
+        <YStack pos="relative">
+          <Avatar circular size={72} bg="$purple3" borderWidth={2} borderColor="$purple9">
+            {profileUser.avatar_url ? (
+              <Image source={{ uri: profileUser.avatar_url }} style={styles.avatarImage} contentFit="cover" />
+            ) : (
+              <Avatar.Fallback bc="$purple10" jc="center" ai="center">
+                <Text color="white" fow="bold" fos="$6">{profileUser.email.substring(0, 2).toUpperCase()}</Text>
+              </Avatar.Fallback>
+            )}
+          </Avatar>
+          {!isEditing && (
+            <Button
+              pos="absolute"
+              bottom={-2}
+              right={-2}
+              size="$1"
+              circular
+              bg="$purple10"
+              onPress={() => {
+                setEditName(profileUser.name || "");
+                setSelectedAvatar(profileUser.avatar_url || "");
+                setIsEditing(true);
+              }}
+              accessibilityLabel="Edit profile"
+              style={styles.editButton}
+            >
+              <SymbolView name={{ ios: "pencil", android: "edit", web: "edit" }} size={13} tintColor="white" />
+            </Button>
+          )}
+        </YStack>
+
+        <YStack f={1} gap="$0.5">
+          <XStack ai="center" gap="$2" fw="wrap">
+            <Text fow="800" fos="$6" color="$color" numberOfLines={1}>{profileUser.name || "Nexton User"}</Text>
+            <XStack bg="$purple9" px="$2" py="$0.5" borderRadius="$4">
+              <Text fow="800" fos="$1" color="white" letterSpacing={0.5}>Lv. {stats.current_level}</Text>
+            </XStack>
+          </XStack>
+          <Text color="$purple10" fow="600" fos="$2" numberOfLines={1}>{levelTitle}</Text>
+          <Text color="$color" opacity={0.5} fos="$1" numberOfLines={1}>{profileUser.email}</Text>
+        </YStack>
+      </XStack>
+
       {isEditing && (
-        <YStack w="100%" gap="$3" bg="$backgroundElement" p="$4" borderRadius="$4" borderWidth={1} borderColor="$borderColor" mt="$1">
+        <YStack w="100%" gap="$3" bg="$backgroundElement" p="$4" borderRadius="$4" borderWidth={1} borderColor="$borderColor">
           <Text fow="bold" fos="$2" color="$color">Edit Display Name</Text>
           <Input
             bg="$background"
@@ -160,8 +134,7 @@ export default function ProfileHeader({
             placeholder="Enter username"
             placeholderTextColor="$color8"
           />
-
-          <Text fow="bold" fos="$2" color="$color" mt="$1">Select Avatar Preset</Text>
+          <Text fow="bold" fos="$2" color="$color">Select Avatar Preset</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetsScroll}>
             {AVATAR_PRESETS.map((preset) => {
               const isSelected = selectedAvatar === preset;
@@ -181,12 +154,9 @@ export default function ProfileHeader({
               );
             })}
           </ScrollView>
-
           <XStack gap="$2" mt="$2" jc="flex-end">
-            <Button size="$3" chromeless onPress={() => setIsEditing(false)} disabled={updating}>
-              Cancel
-            </Button>
-            <Button size="$3" theme="purple" bg="$purple10" color="white" onPress={onUpdateProfileDetails} disabled={updating}>
+            <Button size="$3" chromeless onPress={() => setIsEditing(false)} disabled={updating}>Cancel</Button>
+            <Button size="$3" bg="$purple10" color="white" onPress={onUpdateProfileDetails} disabled={updating}>
               {updating ? <Spinner color="white" /> : "Save Changes"}
             </Button>
           </XStack>
@@ -197,46 +167,16 @@ export default function ProfileHeader({
 }
 
 const styles = StyleSheet.create({
-  avatarShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  badgeShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  avatarImage: {
-    width: "100%",
-    height: "100%",
-  },
-  presetImage: {
-    width: 44,
-    height: 44,
-  },
-  presetsScroll: {
-    gap: 10,
-    paddingVertical: 4,
-  },
+  avatarImage: { width: "100%", height: "100%" },
+  presetImage: { width: 44, height: 44 },
+  presetsScroll: { gap: 10, paddingVertical: 4 },
   editButton: {
-    width: 24,
-    height: 24,
-    minHeight: 24,
-    minWidth: 24,
+    width: 26,
+    height: 26,
+    minHeight: 26,
+    minWidth: 26,
     padding: 0,
     alignItems: "center",
     justifyContent: "center",
-  },
-  settingButton: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
 });

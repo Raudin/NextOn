@@ -124,3 +124,33 @@ class CacheManager {
 }
 
 export const cache = new CacheManager();
+
+// All derived, screen-level caches. These must be cleared whenever watchlist or
+// watched state changes anywhere in the app (Home schedule, Watchlist list +
+// progress, Discover badge ids, plus legacy keys). Keeping the full set in one
+// place prevents each screen invalidating only its own subset, which previously
+// left the Home schedule stale after titles were added/removed elsewhere.
+export const MEDIA_CACHE_KEYS = [
+  "watchlist_items",
+  "watchlist_show_progress",
+  "home_watchlist_items",
+  "home_watched_history",
+  "discover_watchlist_ids",
+  "home_shows_ready",
+  "home_shows_upcoming",
+  "home_movies_ready",
+  "home_movies_upcoming",
+  "home_data",
+] as const;
+
+/**
+ * Clears every derived media cache. Safe to call after any watchlist/watched
+ * mutation (add/remove title, mark/unmark watched, bulk ops, clear history).
+ */
+export const invalidateMediaCaches = async () => {
+  try {
+    await Promise.all(MEDIA_CACHE_KEYS.map((key) => cache.delete(key)));
+  } catch (err) {
+    console.warn("Failed to invalidate media caches:", err);
+  }
+};

@@ -4,7 +4,6 @@ import { useRouter, useFocusEffect } from "expo-router";
 import {
   YStack,
   Text,
-  Button,
   Spinner,
   ScrollView,
 } from "tamagui";
@@ -13,7 +12,7 @@ import { useAuth } from "@/context/AuthContext";
 import ProfileHeader from "@/components/Profile/ProfileHeader";
 import StatsGrid from "@/components/Profile/StatsGrid";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
-import { cache } from "@/lib/cache";
+import { invalidateMediaCaches } from "@/lib/cache";
 
 import {
   fetchUserProfile,
@@ -105,6 +104,14 @@ export default function ProfileScreen() {
   }
 
   if (!token || !profileUser || !stats) {
+    if (error) {
+      return (
+        <YStack f={1} bg="$background" ai="center" jc="center" px="$5" gap="$3">
+          <Text color="$red10" fow="700" fos="$5" ta="center">Unable to load your profile</Text>
+          <Text color="$color" opacity={0.6} ta="center">{error}</Text>
+        </YStack>
+      );
+    }
     return null;
   }
 
@@ -159,12 +166,7 @@ export default function ProfileScreen() {
         try {
           await clearWatchHistory();
           // Invalidate affected caches
-          await Promise.all([
-            cache.delete("home_watchlist_items"),
-            cache.delete("home_watched_history"),
-            cache.delete("watchlist_items"),
-            cache.delete("watchlist_show_progress"),
-          ]).catch(() => {});
+          await invalidateMediaCaches();
           loadProfile();
         } catch (err: any) {
           setError(err.message || "Failed to clear watch history.");
@@ -202,8 +204,12 @@ export default function ProfileScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <YStack px="$4" py="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.scrollContent}
+      >
+        <YStack px="$4" pt="$4" pb="$5" gap="$6" maxWidth={600} alignSelf="center" w="100%">
 
           {error && (
             <YStack bg="$red2" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
@@ -212,7 +218,6 @@ export default function ProfileScreen() {
             </YStack>
           )}
 
-          {/* Profile Header (Avatar Top-Left, Settings Icon Top-Right) */}
           <ProfileHeader
             profileUser={profileUser}
             stats={stats}
@@ -227,7 +232,6 @@ export default function ProfileScreen() {
             onOpenSettings={() => setIsSettingsOpen(true)}
           />
 
-          {/* Statistics Horizontal Scrollable Ribbon */}
           <StatsGrid stats={stats} />
 
         </YStack>

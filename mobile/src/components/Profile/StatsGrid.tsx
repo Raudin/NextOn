@@ -1,6 +1,7 @@
 import React from "react";
 import { StyleSheet } from "react-native";
-import { ScrollView, Text, XStack, YStack } from "tamagui";
+import { SymbolView } from "expo-symbols";
+import { Text, XStack, YStack } from "tamagui";
 import { type ProfileStats } from "@/lib/media-api";
 
 interface StatsGridProps {
@@ -13,197 +14,77 @@ function formatWatchTime(totalMinutes: number): string {
   return `${days}d ${hours}h`;
 }
 
+type StatCardProps = {
+  label: string;
+  value: string | number;
+  symbol: string;
+  tint: string;
+};
+
+function StatCard({ label, value, symbol, tint }: StatCardProps) {
+  return (
+    <YStack
+      flex={1}
+      minWidth={145}
+      gap="$2"
+      bg="$backgroundElement"
+      p="$4"
+      borderRadius="$4"
+      borderCurve="continuous"
+      borderWidth={1}
+      borderColor="$borderColor"
+    >
+      <SymbolView
+        name={{ ios: symbol as never, android: "star", web: "star" }}
+        size={20}
+        tintColor={tint}
+      />
+      <YStack gap="$0.5">
+        <Text fow="800" fos="$7" color="$color" style={styles.value} selectable>
+          {value}
+        </Text>
+        <Text fos="$2" color="$color" opacity={0.55}>
+          {label}
+        </Text>
+      </YStack>
+    </YStack>
+  );
+}
+
 export default function StatsGrid({ stats }: StatsGridProps) {
   const xpInLevel = (stats.current_xp || 0) % 1000;
   const levelProgress = Math.min(1, Math.max(0, xpInLevel / 1000));
 
   return (
-    <YStack gap="$2" w="100%">
-      <XStack jc="space-between" ai="center" px="$1">
-        <Text fow="800" fos="$2" color="$color" opacity={0.6} letterSpacing={1}>
-          STATISTICS
-        </Text>
-        <Text fos="$1" color="$purple10" fow="600">
-          Scroll for details →
-        </Text>
+    <YStack gap="$3" w="100%">
+      <YStack gap="$1">
+        <Text fow="800" fos="$5" color="$color">Your activity</Text>
+        <Text fos="$2" color="$color" opacity={0.55}>A quick look at your progress</Text>
+      </YStack>
+
+      <XStack flexWrap="wrap" gap="$3">
+        <StatCard label="Movies watched" value={stats.total_movies_watched} symbol="film.fill" tint="#AF52DE" />
+        <StatCard label="Episodes watched" value={stats.total_episodes_watched} symbol="play.tv.fill" tint="#007AFF" />
+        <StatCard label="Watch time" value={formatWatchTime(stats.total_watch_time_minutes)} symbol="clock.fill" tint="#34C759" />
+        <StatCard label="Current streak" value={`${stats.streak_days} days`} symbol="flame.fill" tint="#FF9500" />
       </XStack>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContainer}
-        decelerationRate="fast"
-      >
-        {/* Card 1: Movies Watched */}
-        <YStack
-          w={135}
-          bg="$backgroundElement"
-          p="$3"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
-          ai="flex-start"
-          jc="space-between"
-          gap="$2"
-          style={styles.cardShadow}
-        >
-          <XStack w="100%" jc="space-between" ai="center">
-            <Text fos="$6">🎬</Text>
-            <XStack bg="$purple3" px="$2" py="$0.5" borderRadius="$3">
-              <Text fos="$1" color="$purple10" fow="bold">Films</Text>
-            </XStack>
+      <YStack gap="$2" bg="$backgroundElement" p="$4" borderRadius="$4" borderCurve="continuous" borderWidth={1} borderColor="$borderColor">
+        <XStack jc="space-between" ai="center">
+          <XStack ai="center" gap="$2">
+            <SymbolView name={{ ios: "star.fill", android: "star", web: "star" }} size={20} tintColor="#AF52DE" />
+            <Text fow="700" fos="$3" color="$color">Level {stats.current_level}</Text>
           </XStack>
-          <YStack gap="$0.5">
-            <Text fow="900" fos="$6" color="$color">
-              {stats.total_movies_watched}
-            </Text>
-            <Text fos="$1" color="$color" opacity={0.5} fow="600">
-              Movies Watched
-            </Text>
-          </YStack>
+          <Text fos="$2" color="$purple10" fow="700" style={styles.value}>{xpInLevel}/1000 XP</Text>
+        </XStack>
+        <YStack h={6} bg="$background" borderRadius="$3" overflow="hidden" w="100%">
+          <YStack h="100%" w={`${Math.max(2, levelProgress * 100)}%`} bg="$purple10" borderRadius="$3" />
         </YStack>
-
-        {/* Card 2: Episodes Watched */}
-        <YStack
-          w={135}
-          bg="$backgroundElement"
-          p="$3"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
-          ai="flex-start"
-          jc="space-between"
-          gap="$2"
-          style={styles.cardShadow}
-        >
-          <XStack w="100%" jc="space-between" ai="center">
-            <Text fos="$6">📺</Text>
-            <XStack bg="$blue3" px="$2" py="$0.5" borderRadius="$3">
-              <Text fos="$1" color="$blue10" fow="bold">Shows</Text>
-            </XStack>
-          </XStack>
-          <YStack gap="$0.5">
-            <Text fow="900" fos="$6" color="$color">
-              {stats.total_episodes_watched}
-            </Text>
-            <Text fos="$1" color="$color" opacity={0.5} fow="600">
-              Episodes Watched
-            </Text>
-          </YStack>
-        </YStack>
-
-        {/* Card 3: Watch Time */}
-        <YStack
-          w={135}
-          bg="$backgroundElement"
-          p="$3"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
-          ai="flex-start"
-          jc="space-between"
-          gap="$2"
-          style={styles.cardShadow}
-        >
-          <XStack w="100%" jc="space-between" ai="center">
-            <Text fos="$6">⏱️</Text>
-            <XStack bg="$green3" px="$2" py="$0.5" borderRadius="$3">
-              <Text fos="$1" color="$green10" fow="bold">Time</Text>
-            </XStack>
-          </XStack>
-          <YStack gap="$0.5">
-            <Text fow="900" fos="$5" color="$color">
-              {formatWatchTime(stats.total_watch_time_minutes)}
-            </Text>
-            <Text fos="$1" color="$color" opacity={0.5} fow="600">
-              Total Time Spent
-            </Text>
-          </YStack>
-        </YStack>
-
-        {/* Card 4: Streak */}
-        <YStack
-          w={135}
-          bg="$backgroundElement"
-          p="$3"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
-          ai="flex-start"
-          jc="space-between"
-          gap="$2"
-          style={styles.cardShadow}
-        >
-          <XStack w="100%" jc="space-between" ai="center">
-            <Text fos="$6">🔥</Text>
-            <XStack bg="$orange3" px="$2" py="$0.5" borderRadius="$3">
-              <Text fos="$1" color="$orange10" fow="bold">Active</Text>
-            </XStack>
-          </XStack>
-          <YStack gap="$0.5">
-            <Text fow="900" fos="$6" color="$color">
-              {stats.streak_days} <Text fos="$2" color="$color" opacity={0.7}>Days</Text>
-            </Text>
-            <Text fos="$1" color="$color" opacity={0.5} fow="600">
-              Current Streak
-            </Text>
-          </YStack>
-        </YStack>
-
-        {/* Card 5: Level & XP Progress */}
-        <YStack
-          w={155}
-          bg="$backgroundElement"
-          p="$3"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
-          ai="flex-start"
-          jc="space-between"
-          gap="$2"
-          style={styles.cardShadow}
-        >
-          <XStack w="100%" jc="space-between" ai="center">
-            <Text fos="$6">⭐</Text>
-            <XStack bg="$purple10" px="$2" py="$0.5" borderRadius="$3">
-              <Text fos="$1" color="white" fow="bold">Lv. {stats.current_level}</Text>
-            </XStack>
-          </XStack>
-          <YStack gap="$1" w="100%">
-            <XStack jc="space-between" ai="center">
-              <Text fos="$1" color="$color" opacity={0.5} fow="600">
-                XP Progress
-              </Text>
-              <Text fos="$1" color="$purple10" fow="bold">
-                {xpInLevel}/1000
-              </Text>
-            </XStack>
-            <YStack h={5} bg="$background" borderRadius="$2" overflow="hidden" w="100%">
-              <YStack
-                h="100%"
-                w={`${Math.max(5, levelProgress * 100)}%`}
-                bg="$purple10"
-                borderRadius="$2"
-              />
-            </YStack>
-          </YStack>
-        </YStack>
-      </ScrollView>
+      </YStack>
     </YStack>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContainer: {
-    gap: 12,
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-  },
-  cardShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
+  value: { fontVariant: ["tabular-nums"] },
 });

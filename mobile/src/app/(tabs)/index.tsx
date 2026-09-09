@@ -6,11 +6,10 @@ import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { Image } from "expo-image";
 import { useAuth } from "@/context/AuthContext";
 
-import { cache } from "@/lib/cache";
+import { cache, invalidateMediaCaches } from "@/lib/cache";
 
 import {
   fetchWatchlist,
-  fetchWatchedHistory,
   fetchWatchedStatus,
   fetchMediaDetails,
   fetchSeasonEpisodes,
@@ -22,24 +21,12 @@ import {
   type MediaDetails,
 } from "@/lib/media-api";
 
-const invalidateMediaCaches = async () => {
-  try {
-    await Promise.all([
-      cache.delete("watchlist_items"),
-      cache.delete("watchlist_show_progress"),
-      cache.delete("home_watchlist_items"),
-      cache.delete("home_watched_history"),
-      cache.delete("discover_watchlist_ids"),
-      cache.delete("home_shows_ready"),
-      cache.delete("home_shows_upcoming"),
-      cache.delete("home_movies_ready"),
-      cache.delete("home_movies_upcoming"),
-    ]);
-  } catch (err) {
-    console.warn("Failed to invalidate media caches:", err);
-  }
-};
 
+// the whole watchlist + TMDB schedule (dozens of concurrent API calls) on every
+// screen focus, hammering the backend. Within this window the cached schedule
+// is shown as-is and the heavy network revalidation is skipped.
+const HOME_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
+let lastHomeFetchAt = 0;
 
 const ensureDate = (val: any): Date | null => {
   if (!val) return null;
@@ -182,22 +169,34 @@ export default function HomeScreen() {
       }));
     };
 
-    if (cachedShowsReady || cachedShowsUpcoming || cachedMoviesReady || cachedMoviesUpcoming) {
+    const hasCache = Boolean(
+      cachedShowsReady ||
+      cachedShowsUpcoming ||
+      cachedMoviesReady ||
+      cachedMoviesUpcoming
+    );
+    const isStale = Date.now() - lastHomeFetchAt >= HOME_REVALIDATE_INTERVAL_MS;
+
+    if (hasCache) {
       setShowsReady(parseCachedItemDates(cachedShowsReady));
       setShowsUpcoming(parseCachedItemDates(cachedShowsUpcoming));
       setMoviesReady(parseCachedItemDates(cachedMoviesReady));
       setMoviesUpcoming(parseCachedItemDates(cachedMoviesUpcoming));
       setLoading(false);
+      setError(null);
+
+      if (!forceRefresh && !isStale) {
+        // Cache is fresh: skip the expensive network revalidation entirely.
+        setBackgroundRefreshing(false);
+        return;
+      }
       setBackgroundRefreshing(true);
     } else {
       setLoading(true);
     }
 
     try {
-      const [watchlist] = await Promise.all([
-        fetchWatchlist({ filterWatched: true }),
-        fetchWatchedHistory(),
-      ]);
+      const watchlist = await fetchWatchlist({ filterWatched: true });
 
       const resolvedList = await Promise.allSettled(
         watchlist.map(async (item) => {
@@ -323,6 +322,7 @@ export default function HomeScreen() {
         cache.set("home_movies_ready", nextMoviesReady),
         cache.set("home_movies_upcoming", nextMoviesUpcoming),
       ]);
+      lastHomeFetchAt = Date.now();
 
       setShowsReady(nextShowsReady);
       setShowsUpcoming(nextShowsUpcoming);

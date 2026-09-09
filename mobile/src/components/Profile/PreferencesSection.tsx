@@ -1,6 +1,8 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, ScrollView } from "react-native";
-import { Button, Switch, Text, XStack, YStack } from "tamagui";
+import { Modal, Pressable, ScrollView, StyleSheet } from "react-native";
+import { SymbolView } from "expo-symbols";
+import { Host, Switch as NativeSwitch } from "@expo/ui";
+import { Button, Text, XStack, YStack } from "tamagui";
 import { type User } from "@/lib/media-api";
 
 interface PreferencesSectionProps {
@@ -13,6 +15,32 @@ interface PreferencesSectionProps {
   onClearHistory: () => void;
   onDeleteAccount: () => void;
   onLogout: () => void;
+}
+
+type SettingsRowProps = {
+  symbol: string;
+  title: string;
+  subtitle?: string;
+  tint?: string;
+  onPress?: () => void;
+  trailing?: React.ReactNode;
+};
+
+function SettingsRow({ symbol, title, subtitle, tint = "#6E6E73", onPress, trailing }: SettingsRowProps) {
+  return (
+    <Pressable onPress={onPress} disabled={!onPress} style={({ pressed }) => [styles.rowPressable, pressed && styles.pressed]}>
+      <XStack ai="center" gap="$3" p="$3" minHeight={64}>
+        <YStack w={30} h={30} br="$2" bg="$background" ai="center" jc="center">
+          <SymbolView name={{ ios: symbol as never, android: "settings", web: "settings" }} size={17} tintColor={tint} />
+        </YStack>
+        <YStack f={1} gap="$0.5">
+          <Text color="$color" fow="600" fos="$3">{title}</Text>
+          {subtitle && <Text color="$color" opacity={0.5} fos="$1">{subtitle}</Text>}
+        </YStack>
+        {trailing}
+      </XStack>
+    </Pressable>
+  );
 }
 
 export default function PreferencesSection({
@@ -29,205 +57,75 @@ export default function PreferencesSection({
   if (!isOpen) return null;
 
   return (
-    <Modal
-      visible={isOpen}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={{ width: "100%", maxWidth: 520 }} onPress={(e) => e.stopPropagation()}>
-          <YStack
-            bg="$background"
-            borderTopLeftRadius="$6"
-            borderTopRightRadius="$6"
-            borderRadius="$5"
-            borderWidth={1}
-            borderColor="$borderColor"
-            p="$5"
-            gap="$4"
-            style={styles.sheetShadow}
-          >
-            {/* Sheet Header */}
-            <XStack jc="space-between" ai="center" w="100%" pb="$2" borderBottomWidth={1} borderBottomColor="$borderColor">
-              <XStack ai="center" gap="$2">
-                <Text fos="$5">⚙️</Text>
-                <Text fow="800" fos="$5" color="$color">
-                  Settings & Preferences
-                </Text>
+        <Pressable style={styles.sheetContainer} onPress={(event) => event.stopPropagation()}>
+          <YStack bg="$background" borderTopLeftRadius="$6" borderTopRightRadius="$6" p="$4" gap="$4" style={styles.sheet}>
+            <YStack ai="center" gap="$3">
+              <YStack w={36} h={4} br="$2" bg="$color" opacity={0.2} />
+              <XStack jc="space-between" ai="center" w="100%">
+                <YStack gap="$0.5">
+                  <Text fow="800" fos="$7" color="$color">Settings</Text>
+                  <Text fos="$2" color="$color" opacity={0.55}>Manage your NextOn experience</Text>
+                </YStack>
+                <Button size="$3" circular chromeless onPress={onClose} accessibilityLabel="Close settings">
+                  <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={18} tintColor="#6E6E73" />
+                </Button>
               </XStack>
-              <Button
-                size="$2"
-                circular
-                chromeless
-                onPress={onClose}
-                pressStyle={{ opacity: 0.7 }}
-              >
-                <Text fos="$4" color="$color" opacity={0.6}>
-                  ✕
-                </Text>
-              </Button>
-            </XStack>
+            </YStack>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 480 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
               <YStack gap="$4">
-                {/* Section: App Preferences */}
                 <YStack gap="$2">
-                  <Text fow="800" fos="$1" color="$color" opacity={0.5} letterSpacing={1}>
-                    APP PREFERENCES
-                  </Text>
-
-                  {/* Notifications Toggle */}
-                  <XStack
-                    bg="$backgroundElement"
-                    p="$3"
-                    borderRadius="$4"
-                    borderWidth={1}
-                    borderColor="$borderColor"
-                    ai="center"
-                    jc="space-between"
-                  >
-                    <XStack gap="$3" ai="center" f={1}>
-                      <Text fos="$5">🔔</Text>
-                      <YStack f={1}>
-                        <Text color="$color" fow="bold" fos="$3">
-                          Notifications
-                        </Text>
-                        <Text color="$color" opacity={0.5} fos="$1">
-                          Air date & show updates
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <Switch
-                      size="$3"
-                      theme="purple"
-                      checked={!!profileUser.notifications_enabled}
-                      onCheckedChange={onToggleNotifications}
-                    >
-                      <Switch.Thumb />
-                    </Switch>
-                  </XStack>
-
-                  {/* Theme Selector */}
-                  <XStack
-                    bg="$backgroundElement"
-                    p="$3"
-                    borderRadius="$4"
-                    borderWidth={1}
-                    borderColor="$borderColor"
-                    ai="center"
-                    jc="space-between"
-                    pressStyle={{ opacity: 0.8 }}
-                    onPress={onCycleAppearance}
-                  >
-                    <XStack gap="$3" ai="center" f={1}>
-                      <Text fos="$5">🎨</Text>
-                      <YStack f={1}>
-                        <Text color="$color" fow="bold" fos="$3">
-                          Appearance
-                        </Text>
-                        <Text color="$color" opacity={0.5} fos="$1">
-                          Theme mode
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <XStack ai="center" gap="$1" bg="$background" px="$3" py="$1" borderRadius="$3">
-                      <Text color="$purple10" fow="bold" fos="$2" tt="capitalize">
-                        {themeMode}
-                      </Text>
-                    </XStack>
-                  </XStack>
+                  <Text fow="700" fos="$2" color="$color" opacity={0.55} px="$1">PREFERENCES</Text>
+                  <YStack bg="$backgroundElement" borderRadius="$4" borderCurve="continuous" overflow="hidden">
+                    <SettingsRow
+                      symbol="bell"
+                      title="Notifications"
+                      subtitle="Air date and show updates"
+                      trailing={
+                        <Host>
+                          <NativeSwitch value={!!profileUser.notifications_enabled} onValueChange={onToggleNotifications} />
+                        </Host>
+                      }
+                    />
+                    <YStack h={StyleSheet.hairlineWidth} bg="$borderColor" ml={66} />
+                    <SettingsRow
+                      symbol="circle.lefthalf.filled"
+                      title="Appearance"
+                      subtitle="Choose light, dark, or system"
+                      onPress={onCycleAppearance}
+                      trailing={<Text color="$purple10" fow="700" fos="$2" tt="capitalize">{themeMode}</Text>}
+                    />
+                  </YStack>
                 </YStack>
 
-                {/* Section: Account & Privacy */}
                 <YStack gap="$2">
-                  <Text fow="800" fos="$1" color="$color" opacity={0.5} letterSpacing={1}>
-                    PRIVACY & DATA
-                  </Text>
-
-                  {/* Clear Watch History */}
-                  <XStack
-                    bg="$backgroundElement"
-                    p="$3"
-                    borderRadius="$4"
-                    borderWidth={1}
-                    borderColor="$borderColor"
-                    ai="center"
-                    jc="space-between"
-                    pressStyle={{ opacity: 0.8 }}
-                    onPress={() => {
-                      onClose();
-                      onClearHistory();
-                    }}
-                  >
-                    <XStack gap="$3" ai="center" f={1}>
-                      <Text fos="$5">🔒</Text>
-                      <YStack f={1}>
-                        <Text color="$color" fow="bold" fos="$3">
-                          Clear Watch History
-                        </Text>
-                        <Text color="$color" opacity={0.5} fos="$1">
-                          Reset stats, levels, and streaks
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <Text color="$red10" fow="bold" fos="$2" px="$3" py="$1" bg="$red2" borderRadius="$3">
-                      Clear
-                    </Text>
-                  </XStack>
-
-                  {/* Delete Account */}
-                  <XStack
-                    bg="$backgroundElement"
-                    p="$3"
-                    borderRadius="$4"
-                    borderWidth={1}
-                    borderColor="$borderColor"
-                    ai="center"
-                    jc="space-between"
-                    pressStyle={{ opacity: 0.8 }}
-                    onPress={() => {
-                      onClose();
-                      onDeleteAccount();
-                    }}
-                  >
-                    <XStack gap="$3" ai="center" f={1}>
-                      <Text fos="$5">⚠️</Text>
-                      <YStack f={1}>
-                        <Text color="$color" fow="bold" fos="$3">
-                          Delete Account
-                        </Text>
-                        <Text color="$color" opacity={0.5} fos="$1">
-                          Permanently erase all profile data
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <Text color="$red10" fow="bold" fos="$2" px="$3" py="$1" bg="$red2" borderRadius="$3">
-                      Delete
-                    </Text>
-                  </XStack>
+                  <Text fow="700" fos="$2" color="$color" opacity={0.55} px="$1">PRIVACY & DATA</Text>
+                  <YStack bg="$backgroundElement" borderRadius="$4" borderCurve="continuous" overflow="hidden">
+                    <SettingsRow
+                      symbol="clock.arrow.circlepath"
+                      title="Clear watch history"
+                      subtitle="Reset stats, levels, and streaks"
+                      tint="#FF3B30"
+                      onPress={() => { onClose(); onClearHistory(); }}
+                      trailing={<SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={15} tintColor="#8E8E93" />}
+                    />
+                    <YStack h={StyleSheet.hairlineWidth} bg="$borderColor" ml={66} />
+                    <SettingsRow
+                      symbol="trash"
+                      title="Delete account"
+                      subtitle="Permanently erase all profile data"
+                      tint="#FF3B30"
+                      onPress={() => { onClose(); onDeleteAccount(); }}
+                      trailing={<SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={15} tintColor="#8E8E93" />}
+                    />
+                  </YStack>
                 </YStack>
 
-                {/* Log Out Button */}
-                <YStack pt="$2">
-                  <Button
-                    size="$4"
-                    borderColor="$red8"
-                    color="$red10"
-                    bg="$red2"
-                    hoverStyle={{ bg: "$red3", borderColor: "$red10" }}
-                    pressStyle={{ bg: "$red4" }}
-                    fontWeight="bold"
-                    borderRadius="$4"
-                    onPress={() => {
-                      onClose();
-                      onLogout();
-                    }}
-                    w="100%"
-                  >
-                    Log Out 🚪
-                  </Button>
-                </YStack>
+                <Button size="$4" bg="$red2" color="$red10" borderColor="$red8" borderWidth={1} onPress={() => { onClose(); onLogout(); }}>
+                  Log Out
+                </Button>
               </YStack>
             </ScrollView>
           </YStack>
@@ -238,18 +136,10 @@ export default function PreferencesSection({
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.65)",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    padding: 16,
-  },
-  sheetShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
-  },
+  overlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.4)", justifyContent: "flex-end" },
+  sheetContainer: { width: "100%", maxWidth: 560, alignSelf: "center" },
+  sheet: { maxHeight: "88%" },
+  content: { paddingBottom: 16, gap: 16 },
+  rowPressable: { minHeight: 64 },
+  pressed: { opacity: 0.65 },
 });

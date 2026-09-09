@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -87,12 +88,42 @@ func handleGetWatchlist(c *gin.Context) {
 	}
 
 	if filterWatched {
-		filtered := make([]TMDBMedia, 0, len(items))
-		for _, item := range items {
-			if isWatchlistItemFullyWatched(userUID, item) {
+		// Load the user's watched history once instead of re-querying it for
+		// every watchlist item inside isWatchlistItemFullyWatched.
+		watched := getUserWatched(userUID)
+
+		// Movies are pure DB checks, but each TV show needs a TMDB lookup for
+		// its total episode count. Run those in parallel (bounded) so endpoint
+		// latency is ~max(tmdb latency) instead of the sum of N sequential
+		// calls, which previously blew past the mobile client's timeout.
+		fullyWatched := make([]bool, len(items))
+		for i, item := range items {
+			if watchlistMediaType(item) != "tv" {
+				fullyWatched[i] = isWatchlistItemFullyWatched(item, watched)
+			}
+		}
+
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 10)
+		for i := range items {
+			if watchlistMediaType(items[i]) != "tv" {
 				continue
 			}
-			filtered = append(filtered, item)
+			wg.Add(1)
+			go func(idx int, it TMDBMedia) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				fullyWatched[idx] = isWatchlistItemFullyWatched(it, watched)
+			}(i, items[i])
+		}
+		wg.Wait()
+
+		filtered := make([]TMDBMedia, 0, len(items))
+		for i, item := range items {
+			if !fullyWatched[i] {
+				filtered = append(filtered, item)
+			}
 		}
 		items = filtered
 	}

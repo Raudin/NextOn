@@ -8,7 +8,7 @@ import MediaCarousel from "@/components/Discover/MediaCarousel";
 import SearchRow from "@/components/Discover/SearchRow";
 import EmptyState from "@/components/EmptyState";
 import SearchField from "@/components/SearchField";
-import { cache } from "@/lib/cache";
+import { cache, invalidateMediaCaches } from "@/lib/cache";
 
 import {
   addToWatchlist,
@@ -154,9 +154,11 @@ export default function DiscoverScreen() {
       } else {
         await addToWatchlist(item);
       }
-      // Invalidate dependent caches
-      await cache.delete("watchlist_items");
-      await cache.delete("home_data");
+      // Invalidate dependent caches (Home schedule, Watchlist, Discover).
+      await invalidateMediaCaches();
+      // The invalidation clears the discover badge cache too; restore it with
+      // the already-updated id set so badges stay correct in this session.
+      await cache.set("discover_watchlist_ids", Array.from(updatedIds));
     } catch {
       // Revert on error
       const revertedIds = new Set(watchlistIds);

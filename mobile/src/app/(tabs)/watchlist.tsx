@@ -26,6 +26,13 @@ import {
   type TMDBMedia,
 } from "@/lib/media-api";
 
+// Revalidation throttle: re-fetching the full watchlist on every screen focus
+// (which triggers expensive server-side "fully watched" filtering) hammered the
+// backend. Within this window the cached list is shown as-is and the network
+// revalidation is skipped.
+const WATCHLIST_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
+let lastWatchlistFetchAt = 0;
+
 interface ShowProgress {
   watchedEpisodes: number;
   totalEpisodes: number;
@@ -68,6 +75,14 @@ export default function WatchlistScreen() {
         setShowProgress(cachedProgress);
       }
       setLoading(false);
+
+      const isStale =
+        Date.now() - lastWatchlistFetchAt >= WATCHLIST_REVALIDATE_INTERVAL_MS;
+      if (!forceRefresh && !isStale) {
+        // Cache is fresh: skip the network revalidation entirely.
+        setBackgroundRefreshing(false);
+        return;
+      }
       setBackgroundRefreshing(true);
     } else {
       setLoading(true);
@@ -76,6 +91,7 @@ export default function WatchlistScreen() {
     try {
       const fetchedItems = await fetchWatchlist({ filterWatched: true });
       await cache.set("watchlist_items", fetchedItems);
+      lastWatchlistFetchAt = Date.now();
       setItems(fetchedItems);
       setError(null);
     } catch (err: any) {
