@@ -12,6 +12,9 @@ export interface TMDBMedia {
   poster_path: string;
   backdrop_path: string;
   vote_average: number;
+  imdb_rating?: number;
+  metascore?: number;
+  rotten_tomatoes?: number;
   media_type?: "movie" | "tv";
   release_date?: string;
   first_air_date?: string;

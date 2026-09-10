@@ -55,7 +55,7 @@ export default function MediaCard({
           </YStack>
         )}
 
-        <RatingBadge rating={item.vote_average} />
+        <RatingBadge item={item} />
         <WatchlistButton added={added} onPress={onToggle} />
       </YStack>
 

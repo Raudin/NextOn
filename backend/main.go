@@ -90,6 +90,11 @@ func main() {
 	}
 
 	log.Println("TMDB_API_KEY loaded successfully.")
+	if os.Getenv("OMDB_API_KEY") == "" {
+		log.Println("Warning: OMDB_API_KEY is not set; IMDb, Metascore, and Rotten Tomatoes ratings will be unavailable.")
+	} else {
+		log.Println("OMDB_API_KEY loaded successfully.")
+	}
 
 	log.Printf("Server starting on port %s...", port)
 	if err := r.Run(":" + port); err != nil {

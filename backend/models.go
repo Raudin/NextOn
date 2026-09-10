@@ -58,16 +58,19 @@ type WatchedItem struct {
 
 // TMDBMedia represents a movie or TV show item from TMDB
 type TMDBMedia struct {
-	ID           int64     `json:"id"`
-	Title        string    `json:"title,omitempty"`
-	Name         string    `json:"name,omitempty"`
-	PosterPath   string    `json:"poster_path"`
-	BackdropPath string    `json:"backdrop_path"`
-	VoteAverage  float64   `json:"vote_average"`
-	MediaType    string    `json:"media_type,omitempty"`
-	ReleaseDate  string    `json:"release_date,omitempty"`
-	FirstAirDate string    `json:"first_air_date,omitempty"`
-	CreatedAt    time.Time `json:"created_at,omitempty"`
+	ID             int64     `json:"id"`
+	Title          string    `json:"title,omitempty"`
+	Name           string    `json:"name,omitempty"`
+	PosterPath     string    `json:"poster_path"`
+	BackdropPath   string    `json:"backdrop_path"`
+	VoteAverage    float64   `json:"vote_average"`
+	IMDBRating     *float64  `json:"imdb_rating,omitempty"`
+	Metascore      *int      `json:"metascore,omitempty"`
+	RottenTomatoes *int      `json:"rotten_tomatoes,omitempty"`
+	MediaType      string    `json:"media_type,omitempty"`
+	ReleaseDate    string    `json:"release_date,omitempty"`
+	FirstAirDate   string    `json:"first_air_date,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
 }
 
 type Genre struct {
@@ -158,10 +161,15 @@ type tmdbVideosResult struct {
 
 type tmdbMediaDetailsResponse struct {
 	MediaDetails
-	Credits  tmdbCredits        `json:"credits"`
-	Images   tmdbImagesResponse `json:"images"`
-	Videos   tmdbVideosResult   `json:"videos"`
-	Networks []Network          `json:"networks"`
+	ExternalIDs tmdbExternalIDs    `json:"external_ids"`
+	Credits     tmdbCredits        `json:"credits"`
+	Images      tmdbImagesResponse `json:"images"`
+	Videos      tmdbVideosResult   `json:"videos"`
+	Networks    []Network          `json:"networks"`
+}
+
+type tmdbExternalIDs struct {
+	IMDBID string `json:"imdb_id"`
 }
 
 // TMDBResponse matches the list response from TMDB endpoints

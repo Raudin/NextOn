@@ -38,6 +38,7 @@ func handleSearch(c *gin.Context) {
 		}
 		results = append(results, item)
 	}
+	enrichMediaRatings(results)
 
 	c.JSON(http.StatusOK, results)
 }
@@ -79,7 +80,7 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 		detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d", mediaType, id)
 		var response tmdbMediaDetailsResponse
 		if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
-			"append_to_response":    "credits,images,videos",
+			"append_to_response":     "credits,images,videos,external_ids",
 			"include_image_language": "en,null",
 		}, &response); err != nil {
 			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
@@ -92,6 +93,21 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			detailsVal := response.MediaDetails
 			detailsVal.ID = id
 			detailsVal.MediaType = mediaType
+			title := detailsVal.Title
+			if title == "" {
+				title = detailsVal.Name
+			}
+			date := detailsVal.ReleaseDate
+			if date == "" {
+				date = detailsVal.FirstAirDate
+			}
+			year := ""
+			if len(date) >= 4 {
+				year = date[:4]
+			}
+			if ratings, err := fetchOMDbRatings(getOMDbAPIKey(), title, year, response.ExternalIDs.IMDBID); err == nil {
+				applyOMDbRatings(&detailsVal.TMDBMedia, ratings)
+			}
 			detailsVal.Cast = topCast(response.Credits.Cast, 12)
 			// Pick up to 3 English logos
 			logos := response.Images.Logos
@@ -240,6 +256,9 @@ func handleDiscover(c *gin.Context) {
 			err = nil
 		}
 	}
+	enrichMediaRatings(data.Trending)
+	enrichMediaRatings(data.Popular)
+	enrichMediaRatings(data.PopularSeries)
 
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch discover data"})

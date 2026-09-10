@@ -127,6 +127,7 @@ func handleGetWatchlist(c *gin.Context) {
 		}
 		items = filtered
 	}
+	enrichMediaRatings(items)
 
 	sort.Slice(items, func(i, j int) bool {
 		return displayTitle(items[i]) < displayTitle(items[j])

@@ -29,6 +29,7 @@ import {
   type MediaDetails,
   type Season,
 } from "@/lib/media-api";
+import RatingLogo from "@/components/Discover/RatingLogo";
 
 export default function MediaDetailScreen() {
   const router = useRouter();
@@ -595,6 +596,31 @@ export default function MediaDetailScreen() {
                     >
                       {mediaTitle(details)}
                     </Text>
+                  )}
+
+                  {(details.imdb_rating != null ||
+                    details.metascore != null ||
+                    details.rotten_tomatoes != null) && (
+                    <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" mt="$2">
+                      {details.imdb_rating != null && (
+                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
+                          <RatingLogo type="imdb" size={18} />
+                          <Text color="white" fow="800" fos="$2">{details.imdb_rating.toFixed(1)}</Text>
+                        </XStack>
+                      )}
+                      {details.metascore != null && (
+                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
+                          <RatingLogo type="metascore" size={18} />
+                          <Text color="white" fow="800" fos="$2">{details.metascore}</Text>
+                        </XStack>
+                      )}
+                      {details.rotten_tomatoes != null && (
+                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
+                          <RatingLogo type="rotten-tomatoes" size={18} />
+                          <Text color="white" fow="800" fos="$2">{details.rotten_tomatoes}%</Text>
+                        </XStack>
+                      )}
+                    </XStack>
                   )}
 
                   {/* Genre bullets + runtime/date */}

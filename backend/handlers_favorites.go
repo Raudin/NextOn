@@ -83,6 +83,7 @@ func handleGetFavorites(c *gin.Context) {
 			CreatedAt:    dbItem.CreatedAt,
 		})
 	}
+	enrichMediaRatings(items)
 
 	sort.Slice(items, func(i, j int) bool {
 		return displayTitle(items[i]) < displayTitle(items[j])

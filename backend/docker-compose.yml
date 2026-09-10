@@ -11,6 +11,7 @@ services:
       - PORT=${PORT:-8080}
       - DB_PATH=${DB_PATH:-/data/nexton.db}
       - TMDB_API_KEY=${TMDB_API_KEY:-dummy}
+      - OMDB_API_KEY=${OMDB_API_KEY:-}
       - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_here}
       - GIN_MODE=${GIN_MODE:-release}
     volumes:

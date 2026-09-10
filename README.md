@@ -55,6 +55,7 @@ Create a `.env` file or export environment variables on your host/server:
 PORT=8080
 DB_PATH=/data/nexton.db
 TMDB_API_KEY=your_tmdb_api_key_or_dummy
+OMDB_API_KEY=your_omdb_api_key
 JWT_SECRET=your_jwt_secret_key
 ```
 
@@ -70,6 +71,7 @@ The `backend/` directory contains a multi-stage `Dockerfile` ready for deploymen
   - `PORT`: Port to listen on (default `8080`)
   - `DB_PATH`: Path to SQLite DB file (default `/data/nexton.db`)
   - `TMDB_API_KEY`: TMDB API key or `dummy`
+  - `OMDB_API_KEY`: OMDb API key used for IMDb, Metascore, and Rotten Tomatoes ratings
   - `JWT_SECRET`: Secret key for JWT token signing
 - **Persistent Storage**: Mount a persistent volume at `/data` so `nexton.db` persists across container redeployments.
 

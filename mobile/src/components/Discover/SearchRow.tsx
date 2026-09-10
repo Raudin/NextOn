@@ -59,7 +59,7 @@ export default function SearchRow({
           </Text>
         </YStack>
         <XStack ai="center" jc="space-between">
-          <RatingPill rating={item.vote_average} />
+          <RatingPill item={item} />
           <WatchlistButton added={added} onPress={onToggle} />
         </XStack>
       </YStack>

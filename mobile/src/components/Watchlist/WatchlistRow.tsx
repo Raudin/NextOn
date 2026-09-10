@@ -96,7 +96,7 @@ export default function WatchlistRow({
               </YStack>
             ) : typeof progress !== "number" ? (
               <Text color="$color" opacity={0.65} fos="$2">
-                {item.vote_average > 0 ? item.vote_average.toFixed(1) : ""}
+                {item.imdb_rating != null ? `IMDb ${item.imdb_rating.toFixed(1)}` : ""}
               </Text>
             ) : null}
           </XStack>
