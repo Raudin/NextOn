@@ -1,5 +1,21 @@
-import { Pressable, useColorScheme } from "react-native";
-import { Text, XStack, YStack } from "tamagui";
+import {
+  ArrowDownAZ,
+  Check,
+  Clock,
+  LayoutGrid,
+  List,
+  type LucideIcon,
+} from "lucide-react-native";
+import { useEffect, useState } from "react";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  useColorScheme,
+  View,
+} from "react-native";
+import { Text, YStack } from "tamagui";
 
 export type WatchlistLayoutMode = "posters" | "list";
 export type WatchlistSortMode = "recent" | "alphabetical";
@@ -13,36 +29,72 @@ interface WatchlistMenuProps {
   onSortChange: (mode: WatchlistSortMode) => void;
 }
 
-interface MenuItemProps {
+interface MenuRowProps {
   label: string;
-  active?: boolean;
+  icon: LucideIcon;
+  active: boolean;
   textColor: string;
+  iconColor: string;
   activeBg: string;
   onPress: () => void;
 }
 
-function MenuItem({ label, active, textColor, activeBg, onPress }: MenuItemProps) {
+function MenuRow({
+  label,
+  icon: Icon,
+  active,
+  textColor,
+  iconColor,
+  activeBg,
+  onPress,
+}: MenuRowProps) {
   return (
-    <XStack
-      ai="center"
-      jc="space-between"
-      px="$3"
-      py="$2.5"
-      borderRadius="$3"
-      bg={active ? activeBg : "transparent"}
-      pressStyle={{ opacity: 0.8 }}
+    <Pressable
       onPress={onPress}
+      style={({ pressed }) => [
+        styles.row,
+        active && { backgroundColor: activeBg },
+        pressed && styles.rowPressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
     >
-      <Text color={textColor} fos="$3" fow={active ? "700" : "500"}>
+      <Icon size={17} color={iconColor} strokeWidth={2.2} />
+      <Text
+        color={textColor}
+        fos="$3"
+        fow={active ? "700" : "500"}
+        style={styles.rowLabel}
+      >
         {label}
       </Text>
-      <Text color={textColor} opacity={active ? 1 : 0}>
-        ✓
-      </Text>
-    </XStack>
+      {active ? <Check size={15} color={iconColor} strokeWidth={3} /> : null}
+    </Pressable>
   );
 }
 
+function SectionLabel({ children, color }: { children: string; color: string }) {
+  return (
+    <Text
+      color={color}
+      fos="$1"
+      fow="800"
+      opacity={0.45}
+      px="$3"
+      pt="$2"
+      pb="$1"
+      letterSpacing={0.8}
+    >
+      {children.toUpperCase()}
+    </Text>
+  );
+}
+
+/**
+ * Options menu for the watchlist header. Renders as an anchored, translucent
+ * material sheet with a spring-in animation, a real icon set, and a checkmark
+ * on the active choice - closer to a native popover than a plain list.
+ */
 export default function WatchlistMenu({
   visible,
   layoutMode,
@@ -53,93 +105,167 @@ export default function WatchlistMenu({
 }: WatchlistMenuProps) {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
+  // Animation value is created once (lazy state init) so it can be read during
+  // render by the animated style without touching a ref.
+  const [progress] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: visible ? 1 : 0,
+      duration: visible ? 170 : 120,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [progress, visible]);
 
   if (!visible) {
     return null;
   }
 
-  const bg = isDark ? "rgba(20, 20, 20, 0.75)" : "rgba(255, 255, 255, 0.75)";
-  const borderColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.12)";
-  const textColor = isDark ? "white" : "black";
-  const itemActiveBg = isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)";
+  const panelBg = isDark ? "rgba(28, 28, 32, 0.94)" : "rgba(250, 250, 252, 0.96)";
+  const borderColor = isDark
+    ? "rgba(255, 255, 255, 0.14)"
+    : "rgba(0, 0, 0, 0.10)";
+  const textColor = isDark ? "#FFFFFF" : "#111111";
+  const iconColor = isDark ? "rgba(255,255,255,0.78)" : "rgba(0,0,0,0.62)";
+  const itemActiveBg = isDark
+    ? "rgba(255, 255, 255, 0.12)"
+    : "rgba(0, 0, 0, 0.07)";
+
+  const select = (action: () => void) => () => {
+    action();
+    onClose();
+  };
 
   return (
     <>
       <Pressable
         onPress={onClose}
-        style={{
-          position: "absolute",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
-          zIndex: 20,
-        }}
+        style={styles.backdrop}
+        accessibilityLabel="Close menu"
       />
 
-      <YStack
-        position="absolute"
-        top={56}
-        right={0}
-        zIndex={30}
-        w={220}
-        p="$2"
-        gap="$1"
-        borderRadius="$5"
-        style={{
-          backgroundColor: bg,
-          borderWidth: 1,
-          borderColor: borderColor,
-        }}
-        shadowColor="#000"
-        shadowOpacity={0.32}
-        shadowRadius={14}
-        shadowOffset={{ width: 0, height: 8 }}
+      <Animated.View
+        style={[
+          styles.panelWrap,
+          {
+            opacity: progress,
+            transform: [
+              {
+                scale: progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.94, 1],
+                }),
+              },
+              {
+                translateY: progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-6, 0],
+                }),
+              },
+            ],
+          },
+        ]}
       >
-        <MenuItem
-          label="Posters"
-          active={layoutMode === "posters"}
-          textColor={textColor}
-          activeBg={itemActiveBg}
-          onPress={() => {
-            onLayoutChange("posters");
-            onClose();
-          }}
-        />
-        <MenuItem
-          label="List"
-          active={layoutMode === "list"}
-          textColor={textColor}
-          activeBg={itemActiveBg}
-          onPress={() => {
-            onLayoutChange("list");
-            onClose();
-          }}
-        />
+        <View
+          style={[
+            styles.panel,
+            { backgroundColor: panelBg, borderColor },
+          ]}
+        >
+          <YStack>
+            <SectionLabel color={textColor}>Layout</SectionLabel>
+            <MenuRow
+              label="Posters"
+              icon={LayoutGrid}
+              active={layoutMode === "posters"}
+              textColor={textColor}
+              iconColor={iconColor}
+              activeBg={itemActiveBg}
+              onPress={select(() => onLayoutChange("posters"))}
+            />
+            <MenuRow
+              label="List"
+              icon={List}
+              active={layoutMode === "list"}
+              textColor={textColor}
+              iconColor={iconColor}
+              activeBg={itemActiveBg}
+              onPress={select(() => onLayoutChange("list"))}
+            />
 
-        <YStack h={1} style={{ backgroundColor: borderColor }} my="$1" />
+            <View style={[styles.divider, { backgroundColor: borderColor }]} />
 
-        <MenuItem
-          label="Recently added"
-          active={sortMode === "recent"}
-          textColor={textColor}
-          activeBg={itemActiveBg}
-          onPress={() => {
-            onSortChange("recent");
-            onClose();
-          }}
-        />
-        <MenuItem
-          label="Alphabetical"
-          active={sortMode === "alphabetical"}
-          textColor={textColor}
-          activeBg={itemActiveBg}
-          onPress={() => {
-            onSortChange("alphabetical");
-            onClose();
-          }}
-        />
-      </YStack>
+            <SectionLabel color={textColor}>Sort by</SectionLabel>
+            <MenuRow
+              label="Recently added"
+              icon={Clock}
+              active={sortMode === "recent"}
+              textColor={textColor}
+              iconColor={iconColor}
+              activeBg={itemActiveBg}
+              onPress={select(() => onSortChange("recent"))}
+            />
+            <MenuRow
+              label="Alphabetical"
+              icon={ArrowDownAZ}
+              active={sortMode === "alphabetical"}
+              textColor={textColor}
+              iconColor={iconColor}
+              activeBg={itemActiveBg}
+              onPress={select(() => onSortChange("alphabetical"))}
+            />
+          </YStack>
+        </View>
+      </Animated.View>
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  backdrop: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    bottom: -8,
+    left: -8,
+    zIndex: 20,
+  },
+  panelWrap: {
+    position: "absolute",
+    top: 52,
+    right: 0,
+    zIndex: 30,
+    width: 232,
+    transformOrigin: "top right",
+  },
+  panel: {
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 6,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.38,
+    shadowRadius: 22,
+    elevation: 12,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  rowPressed: {
+    opacity: 0.6,
+  },
+  rowLabel: {
+    flex: 1,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 4,
+    marginHorizontal: 8,
+  },
+});

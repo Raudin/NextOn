@@ -6,14 +6,14 @@ import {
   TabTrigger,
   TabTriggerSlotProps,
 } from "expo-router/ui";
-import { SymbolView } from "expo-symbols";
 import { Pressable, StyleSheet, View } from "react-native";
 
-import { ExternalLink } from "./external-link";
+import { TabIcon, type TabIconName } from "./tab-icon";
 import { ThemedText } from "./themed-text";
 import { ThemedView } from "./themed-view";
 
 import { MaxContentWidth, Spacing } from "@/constants/theme";
+import { useTheme } from "@/hooks/use-theme";
 
 export default function AppTabs() {
   return (
@@ -22,16 +22,16 @@ export default function AppTabs() {
       <TabList asChild>
         <CustomTabList>
           <TabTrigger name="index" href="/(tabs)" asChild>
-            <TabButton>Home</TabButton>
+            <TabButton icon="home">Home</TabButton>
           </TabTrigger>
           <TabTrigger name="discover" href="/(tabs)/discover" asChild>
-            <TabButton>Discover</TabButton>
+            <TabButton icon="discover">Discover</TabButton>
           </TabTrigger>
           <TabTrigger name="watchlist" href="/(tabs)/watchlist" asChild>
-            <TabButton>Watchlist</TabButton>
+            <TabButton icon="watchlist">Watchlist</TabButton>
           </TabTrigger>
           <TabTrigger name="profile" href="/(tabs)/profile" asChild>
-            <TabButton>Profile</TabButton>
+            <TabButton icon="profile">Profile</TabButton>
           </TabTrigger>
         </CustomTabList>
       </TabList>
@@ -41,22 +41,27 @@ export default function AppTabs() {
 
 export function TabButton({
   children,
+  icon,
   isFocused,
   ...props
-}: TabTriggerSlotProps) {
+}: TabTriggerSlotProps & { icon: TabIconName }) {
+  const theme = useTheme();
+
   return (
     <Pressable {...props} style={({ pressed }) => pressed && styles.pressed}>
-      <ThemedView
-        type={isFocused ? "backgroundSelected" : "backgroundElement"}
-        style={styles.tabButtonView}
-      >
+      <View style={styles.tabButtonView}>
+        <TabIcon
+          name={icon}
+          size={18}
+          color={isFocused ? theme.text : theme.textSecondary}
+        />
         <ThemedText
-          type="small"
+          type={isFocused ? "smallBold" : "small"}
           themeColor={isFocused ? "text" : "textSecondary"}
         >
           {children}
         </ThemedText>
-      </ThemedView>
+      </View>
     </Pressable>
   );
 }
@@ -101,15 +106,11 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   tabButtonView: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.one,
     paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
     borderRadius: Spacing.three,
-  },
-  externalPressable: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: Spacing.one,
-    marginLeft: Spacing.three,
   },
 });

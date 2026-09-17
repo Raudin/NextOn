@@ -1,15 +1,15 @@
 import { Tabs } from "expo-router";
-import { SymbolView } from "expo-symbols";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Platform, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native";
+import { TabIcon, type TabIconName } from "@/components/tab-icon";
 import { useAuth } from "@/context/AuthContext";
 
-const TABS = [
-  { name: "index", label: "Home", ios: "house.fill", android: "home" },
-  { name: "discover", label: "Discover", ios: "safari.fill", android: "explore" },
-  { name: "watchlist", label: "Watchlist", ios: "bookmark.fill", android: "bookmarks" },
-  { name: "profile", label: "Profile", ios: "person.fill", android: "person" },
-] as const;
+const TABS: { name: string; label: string; icon: TabIconName }[] = [
+  { name: "index", label: "Home", icon: "home" },
+  { name: "discover", label: "Discover", icon: "discover" },
+  { name: "watchlist", label: "Watchlist", icon: "watchlist" },
+  { name: "profile", label: "Profile", icon: "profile" },
+];
 
 export default function AppTabs() {
   const insets = useSafeAreaInsets();
@@ -21,7 +21,6 @@ export default function AppTabs() {
     border: isDark ? "rgba(255,255,255,0.14)" : "rgba(60,60,67,0.18)",
     active: isDark ? "#FFFFFF" : "#1C1C1E",
     inactive: isDark ? "#98989F" : "#6C6C70",
-    selected: isDark ? "#3A3A3C" : "#E5E5EA",
   };
 
   return (
@@ -47,12 +46,11 @@ export default function AppTabs() {
                 }}
                 style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
               >
-                <View style={[styles.iconFrame, focused && { backgroundColor: colors.selected }]}>
-                  <SymbolView
-                    name={{ ios: tab.ios as never, android: tab.android as never, web: tab.android as never }}
-                    size={22}
-                    tintColor={focused ? colors.active : colors.inactive}
-                    type="hierarchical"
+                <View style={styles.iconFrame}>
+                  <TabIcon
+                    name={tab.icon}
+                    size={24}
+                    color={focused ? colors.active : colors.inactive}
                   />
                 </View>
                 <Text style={[styles.label, { color: focused ? colors.active : colors.inactive }]}>{tab.label}</Text>

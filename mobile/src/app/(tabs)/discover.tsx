@@ -1,11 +1,12 @@
 import { useAuth } from "@/context/AuthContext";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
+import { useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 
+import MediaCard from "@/components/Discover/MediaCard";
 import MediaCarousel from "@/components/Discover/MediaCarousel";
-import SearchRow from "@/components/Discover/SearchRow";
 import EmptyState from "@/components/EmptyState";
 import SearchField from "@/components/SearchField";
 import { cache, invalidateMediaCaches } from "@/lib/cache";
@@ -14,15 +15,25 @@ import {
   addToWatchlist,
   fetchDiscover,
   fetchWatchlist,
+  releaseYear,
   removeFromWatchlist,
   searchMedia,
   type DiscoverResponse,
   type TMDBMedia,
 } from "@/lib/media-api";
 
+// Search results reuse the watchlist poster grid: 3 cards per row with the same
+// 16pt gutters. The available width is measured with onLayout rather than derived
+// from the window, because the `$4` screen padding token resolves to 18pt (not
+// 16), which silently pushed the third card onto the next row.
+const SEARCH_COLUMNS = 3;
+const SEARCH_GRID_GAP = 16;
+const SCREEN_PADDING_X = 18;
+
 export default function DiscoverScreen() {
   const router = useRouter();
   const { token } = useAuth();
+  const { width } = useWindowDimensions();
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
@@ -186,6 +197,25 @@ export default function DiscoverScreen() {
     });
   }, [searchResults]);
 
+  // Measured width of the results grid; falls back to the window minus the
+  // screen padding for the first frame.
+  const [searchGridWidth, setSearchGridWidth] = useState(0);
+
+  // Exactly SEARCH_COLUMNS cards per row, sized like the watchlist posters.
+  const searchCardWidth = useMemo(() => {
+    const available = searchGridWidth || width - SCREEN_PADDING_X * 2;
+    const raw = Math.floor(
+      (available - SEARCH_GRID_GAP * (SEARCH_COLUMNS - 1)) / SEARCH_COLUMNS,
+    );
+    return Math.max(1, Math.min(180, raw));
+  }, [searchGridWidth, width]);
+
+  const searchSubtitle = (item: TMDBMedia) => {
+    const year = releaseYear(item);
+    const type = (item.media_type || "media").toUpperCase();
+    return year ? `${type} · ${year}` : type;
+  };
+
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -205,11 +235,6 @@ export default function DiscoverScreen() {
                   Find your next favourite movie or show
                 </Text>
               </YStack>
-              {!loading && (
-                <Button size="$3" circular chromeless onPress={() => loadDiscover(true)}>
-                  ↻
-                </Button>
-              )}
             </XStack>
 
             <YStack mt="$3">
@@ -269,17 +294,32 @@ export default function DiscoverScreen() {
                   ) : uniqueSearchResults.length === 0 ? (
                     <EmptyState text={`No results for "${searchQuery}"`} />
                   ) : (
-                    <YStack gap="$3">
+                    <XStack
+                      w="100%"
+                      flexWrap="wrap"
+                      gap={SEARCH_GRID_GAP}
+                      ai="flex-start"
+                      onLayout={(event) => {
+                        const measured = Math.round(
+                          event.nativeEvent.layout.width,
+                        );
+                        setSearchGridWidth((current) =>
+                          current === measured ? current : measured,
+                        );
+                      }}
+                    >
                       {uniqueSearchResults.map((item) => (
-                        <SearchRow
+                        <MediaCard
                           key={`${item.media_type || "media"}-${item.id}`}
                           item={item}
+                          width={searchCardWidth}
+                          subtitle={searchSubtitle(item)}
                           added={watchlistIds.has(item.id)}
                           onPress={() => openDetails(item)}
                           onToggle={() => toggleWatchlist(item)}
                         />
                       ))}
-                    </YStack>
+                    </XStack>
                   )}
                 </YStack>
               ) : (

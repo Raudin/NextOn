@@ -73,7 +73,7 @@ export default function WatchlistPosterCard({
             jc="center"
             bg={selected ? "$red9" : "rgba(0,0,0,0.72)"}
             borderWidth={1}
-            borderColor={selected ? "$red9" : "rgba(255,255,255,0.45)"}
+            borderColor={selected ? "$red9" : "$borderColor"}
           >
             <Text color="$color" fos="$2" opacity={selected ? 1 : 0.75}>
               {selected ? "✓" : ""}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { Alert, Platform, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   YStack,
   Text,
@@ -11,16 +12,19 @@ import { useAuth } from "@/context/AuthContext";
 
 import ProfileHeader from "@/components/Profile/ProfileHeader";
 import StatsGrid from "@/components/Profile/StatsGrid";
+import WatchActivityGraph from "@/components/Profile/WatchActivityGraph";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
 import { invalidateMediaCaches } from "@/lib/cache";
 
 import {
   fetchUserProfile,
+  fetchWatchedHistory,
   updateUserProfile,
   clearWatchHistory,
   deleteUserAccount,
   type ProfileStats,
   type User,
+  type WatchedItem,
 } from "@/lib/media-api";
 
 const showConfirmDialog = (
@@ -51,6 +55,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [stats, setStats] = useState<ProfileStats | null>(null);
+  const [watchHistory, setWatchHistory] = useState<WatchedItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Edit states
@@ -73,9 +78,14 @@ export default function ProfileScreen() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchUserProfile();
+      const [data, history] = await Promise.all([
+        fetchUserProfile(),
+        // The activity graph is decorative — never let it block or fail the profile.
+        fetchWatchedHistory().catch(() => [] as WatchedItem[]),
+      ]);
       setProfileUser(data.user);
       setStats(data.stats);
+      setWatchHistory(history);
       setEditName(data.user.name || "");
       setSelectedAvatar(data.user.avatar_url || "");
       // Sync auth context user state if needed
@@ -204,38 +214,41 @@ export default function ProfileScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.scrollContent}
-      >
-        <YStack px="$4" pt="$4" pb="$5" gap="$6" maxWidth={600} alignSelf="center" w="100%">
+      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          <YStack px="$4" pt="$2" pb="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
 
-          {error && (
-            <YStack bg="$red2" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
-              <Text color="$red10" fow="bold" ta="center">{error}</Text>
-              <Text color="$red8" fos="$1" ta="center" mt="$1">Tap to dismiss</Text>
-            </YStack>
-          )}
+            {error && (
+              <YStack bg="$red2" p="$3" br="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
+                <Text color="$red10" fow="bold" ta="center">{error}</Text>
+                <Text color="$red8" fos="$1" ta="center" mt="$1">Tap to dismiss</Text>
+              </YStack>
+            )}
 
-          <ProfileHeader
-            profileUser={profileUser}
-            stats={stats}
-            isEditing={isEditing}
-            setIsEditing={setIsEditing}
-            editName={editName}
-            setEditName={setEditName}
-            selectedAvatar={selectedAvatar}
-            setSelectedAvatar={setSelectedAvatar}
-            updating={updating}
-            onUpdateProfileDetails={handleUpdateProfileDetails}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-          />
+            <ProfileHeader
+              profileUser={profileUser}
+              stats={stats}
+              isEditing={isEditing}
+              setIsEditing={setIsEditing}
+              editName={editName}
+              setEditName={setEditName}
+              selectedAvatar={selectedAvatar}
+              setSelectedAvatar={setSelectedAvatar}
+              updating={updating}
+              onUpdateProfileDetails={handleUpdateProfileDetails}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+            />
 
-          <StatsGrid stats={stats} />
+            <StatsGrid stats={stats} />
 
-        </YStack>
-      </ScrollView>
+            <WatchActivityGraph items={watchHistory} />
+
+          </YStack>
+        </ScrollView>
+      </SafeAreaView>
 
       {/* Settings & Preferences Modal Sheet */}
       <PreferencesSection

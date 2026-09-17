@@ -1,86 +1,139 @@
 import React from "react";
 import { StyleSheet } from "react-native";
-import { SymbolView } from "expo-symbols";
+import { Clock, Flame, Film, Star, Tv, type LucideIcon } from "lucide-react-native";
 import { Text, XStack, YStack } from "tamagui";
 import { type ProfileStats } from "@/lib/media-api";
+import {
+  Group,
+  IconTile,
+  LIST_ROW_GAP,
+  LIST_ROW_PADDING,
+  SectionHeader,
+  Separator,
+} from "@/components/Profile/grouped-list";
 
 interface StatsGridProps {
   stats: ProfileStats;
 }
 
+const XP_PER_LEVEL = 1000;
+
 function formatWatchTime(totalMinutes: number): string {
-  const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-  return `${days}d ${hours}h`;
+  const minutes = Math.max(0, Math.round(totalMinutes || 0));
+  if (minutes < 60) return `${minutes}m`;
+
+  const days = Math.floor(minutes / (24 * 60));
+  const hours = Math.floor((minutes % (24 * 60)) / 60);
+  return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
 }
 
-type StatCardProps = {
+interface StatRow {
   label: string;
   value: string | number;
-  symbol: string;
+  icon: LucideIcon;
   tint: string;
-};
+}
 
-function StatCard({ label, value, symbol, tint }: StatCardProps) {
+function StatRowView({ row }: { row: StatRow }) {
   return (
-    <YStack
-      flex={1}
-      minWidth={145}
-      gap="$2"
-      bg="$backgroundElement"
-      p="$4"
-      borderRadius="$4"
-      borderCurve="continuous"
-      borderWidth={1}
-      borderColor="$borderColor"
-    >
-      <SymbolView
-        name={{ ios: symbol as never, android: "star", web: "star" }}
-        size={20}
-        tintColor={tint}
-      />
-      <YStack gap="$0.5">
-        <Text fow="800" fos="$7" color="$color" style={styles.value} selectable>
-          {value}
-        </Text>
-        <Text fos="$2" color="$color" opacity={0.55}>
-          {label}
-        </Text>
-      </YStack>
-    </YStack>
+    <XStack ai="center" gap={LIST_ROW_GAP} px={LIST_ROW_PADDING} minHeight={52}>
+      <IconTile icon={row.icon} tint={row.tint} />
+      <Text f={1} color="$color" fos="$3" numberOfLines={1}>
+        {row.label}
+      </Text>
+      <Text
+        color="$color"
+        opacity={0.6}
+        fow="700"
+        fos="$3"
+        numberOfLines={1}
+        style={styles.value}
+      >
+        {row.value}
+      </Text>
+    </XStack>
   );
 }
 
 export default function StatsGrid({ stats }: StatsGridProps) {
-  const xpInLevel = (stats.current_xp || 0) % 1000;
-  const levelProgress = Math.min(1, Math.max(0, xpInLevel / 1000));
+  const xpInLevel = Math.max(0, (stats.current_xp || 0) % XP_PER_LEVEL);
+  const levelProgress = Math.min(1, Math.max(0, xpInLevel / XP_PER_LEVEL));
+
+  const rows: StatRow[] = [
+    {
+      label: "Movies watched",
+      value: stats.total_movies_watched,
+      icon: Film,
+      tint: "#AF52DE",
+    },
+    {
+      label: "Episodes watched",
+      value: stats.total_episodes_watched,
+      icon: Tv,
+      tint: "#007AFF",
+    },
+    {
+      label: "Watch time",
+      value: formatWatchTime(stats.total_watch_time_minutes),
+      icon: Clock,
+      tint: "#34C759",
+    },
+    {
+      label: "Current streak",
+      value: `${stats.streak_days} ${stats.streak_days === 1 ? "day" : "days"}`,
+      icon: Flame,
+      tint: "#FF9500",
+    },
+  ];
 
   return (
-    <YStack gap="$3" w="100%">
-      <YStack gap="$1">
-        <Text fow="800" fos="$5" color="$color">Your activity</Text>
-        <Text fos="$2" color="$color" opacity={0.55}>A quick look at your progress</Text>
-      </YStack>
+    <YStack gap={10} w="100%">
+      <SectionHeader>Your activity</SectionHeader>
 
-      <XStack flexWrap="wrap" gap="$3">
-        <StatCard label="Movies watched" value={stats.total_movies_watched} symbol="film.fill" tint="#AF52DE" />
-        <StatCard label="Episodes watched" value={stats.total_episodes_watched} symbol="play.tv.fill" tint="#007AFF" />
-        <StatCard label="Watch time" value={formatWatchTime(stats.total_watch_time_minutes)} symbol="clock.fill" tint="#34C759" />
-        <StatCard label="Current streak" value={`${stats.streak_days} days`} symbol="flame.fill" tint="#FF9500" />
-      </XStack>
+      <Group>
+        {rows.map((row, index) => (
+          <React.Fragment key={row.label}>
+            {index > 0 ? <Separator /> : null}
+            <StatRowView row={row} />
+          </React.Fragment>
+        ))}
+      </Group>
 
-      <YStack gap="$2" bg="$backgroundElement" p="$4" borderRadius="$4" borderCurve="continuous" borderWidth={1} borderColor="$borderColor">
-        <XStack jc="space-between" ai="center">
-          <XStack ai="center" gap="$2">
-            <SymbolView name={{ ios: "star.fill", android: "star", web: "star" }} size={20} tintColor="#AF52DE" />
-            <Text fow="700" fos="$3" color="$color">Level {stats.current_level}</Text>
-          </XStack>
-          <Text fos="$2" color="$purple10" fow="700" style={styles.value}>{xpInLevel}/1000 XP</Text>
+      <Group>
+        <XStack
+          ai="center"
+          gap={LIST_ROW_GAP}
+          px={LIST_ROW_PADDING}
+          pt={LIST_ROW_PADDING}
+          pb={10}
+        >
+          <IconTile icon={Star} tint="#AF52DE" />
+          <Text f={1} color="$color" fos="$3" numberOfLines={1}>
+            Level {stats.current_level}
+          </Text>
+          <Text
+            color="$color"
+            opacity={0.6}
+            fow="700"
+            fos="$3"
+            numberOfLines={1}
+            style={styles.value}
+          >
+            {xpInLevel}/{XP_PER_LEVEL} XP
+          </Text>
         </XStack>
-        <YStack h={6} bg="$background" borderRadius="$3" overflow="hidden" w="100%">
-          <YStack h="100%" w={`${Math.max(2, levelProgress * 100)}%`} bg="$purple10" borderRadius="$3" />
+
+        <YStack px={LIST_ROW_PADDING} pb={LIST_ROW_PADDING}>
+          <YStack h={4} br={2} bg="$background" overflow="hidden" w="100%">
+            <YStack
+              h="100%"
+              w={`${Math.max(2, levelProgress * 100)}%`}
+              bg="$purple9"
+              br={2}
+            />
+          </YStack>
         </YStack>
-      </YStack>
+      </Group>
     </YStack>
   );
 }

@@ -1,9 +1,10 @@
 import React from "react";
 import { StyleSheet } from "react-native";
 import { Image } from "expo-image";
-import { SymbolView } from "expo-symbols";
+import { Pencil, Settings } from "lucide-react-native";
 import { Avatar, Button, Input, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { type User, type ProfileStats } from "@/lib/media-api";
+import { useTheme } from "@/hooks/use-theme";
 
 const AVATAR_PRESETS = [
   "https://api.dicebear.com/7.x/bottts/svg?seed=Gladiator",
@@ -51,66 +52,77 @@ export default function ProfileHeader({
   onUpdateProfileDetails,
   onOpenSettings,
 }: ProfileHeaderProps) {
+  const theme = useTheme();
   const levelTitle = getLevelTitle(stats.current_level);
 
   return (
     <YStack w="100%" gap="$4">
-      <XStack jc="space-between" ai="flex-start" w="100%">
-        <YStack gap="$1" f={1}>
-          <Text fow="800" fos="$9" color="$color" letterSpacing={-0.4}>Profile</Text>
-          <Text color="$color" opacity={0.55} fos="$2">Your viewing journey, all in one place</Text>
+      <XStack ai="center" jc="space-between" gap="$3" w="100%">
+        <YStack f={1}>
+          <Text color="$color" fow="900" fos="$9">
+            Profile
+          </Text>
+          <Text color="$color" opacity={0.5} fos="$2">
+            Your viewing journey, all in one place
+          </Text>
         </YStack>
         <Button
+          size="$3"
           circular
-          size="$4"
-          bg="$backgroundElement"
-          borderWidth={1}
-          borderColor="$borderColor"
+          chromeless
           onPress={onOpenSettings}
           accessibilityLabel="Open settings"
-          pressStyle={{ opacity: 0.65, scale: 0.96 }}
+          pressStyle={{ opacity: 0.5 }}
         >
-          <SymbolView name={{ ios: "gearshape", android: "settings", web: "settings" }} size={20} tintColor="#6E6E73" />
+          <Settings size={20} color={theme.text} strokeWidth={2.2} />
         </Button>
       </XStack>
 
       <XStack ai="center" gap="$3" w="100%">
         <YStack pos="relative">
-          <Avatar circular size={72} bg="$purple3" borderWidth={2} borderColor="$purple9">
+          <Avatar
+            circular
+            size={68}
+            bg="$backgroundElement"
+            borderWidth={1}
+            borderColor="$borderColor"
+          >
             {profileUser.avatar_url ? (
               <Image source={{ uri: profileUser.avatar_url }} style={styles.avatarImage} contentFit="cover" />
             ) : (
-              <Avatar.Fallback bc="$purple10" jc="center" ai="center">
-                <Text color="white" fow="bold" fos="$6">{profileUser.email.substring(0, 2).toUpperCase()}</Text>
+              <Avatar.Fallback bc="$purple9" jc="center" ai="center">
+                <Text color="white" fow="700" fos="$5">{profileUser.email.substring(0, 2).toUpperCase()}</Text>
               </Avatar.Fallback>
             )}
           </Avatar>
           {!isEditing && (
             <Button
               pos="absolute"
-              bottom={-2}
-              right={-2}
-              size="$1"
+              b={-2}
+              r={-2}
               circular
-              bg="$purple10"
+              bg="$purple9"
+              borderWidth={2}
+              borderColor="$background"
               onPress={() => {
                 setEditName(profileUser.name || "");
                 setSelectedAvatar(profileUser.avatar_url || "");
                 setIsEditing(true);
               }}
               accessibilityLabel="Edit profile"
+              pressStyle={{ opacity: 0.7 }}
               style={styles.editButton}
             >
-              <SymbolView name={{ ios: "pencil", android: "edit", web: "edit" }} size={13} tintColor="white" />
+              <Pencil size={12} color="white" strokeWidth={2.6} />
             </Button>
           )}
         </YStack>
 
-        <YStack f={1} gap="$0.5">
+        <YStack f={1} gap={2}>
           <XStack ai="center" gap="$2" fw="wrap">
             <Text fow="800" fos="$6" color="$color" numberOfLines={1}>{profileUser.name || "Nexton User"}</Text>
-            <XStack bg="$purple9" px="$2" py="$0.5" borderRadius="$4">
-              <Text fow="800" fos="$1" color="white" letterSpacing={0.5}>Lv. {stats.current_level}</Text>
+            <XStack bg="$purple9" px="$2" py={1} br="$4">
+              <Text fow="800" fos="$1" color="white">Lv. {stats.current_level}</Text>
             </XStack>
           </XStack>
           <Text color="$purple10" fow="600" fos="$2" numberOfLines={1}>{levelTitle}</Text>
@@ -119,45 +131,63 @@ export default function ProfileHeader({
       </XStack>
 
       {isEditing && (
-        <YStack w="100%" gap="$3" bg="$backgroundElement" p="$4" borderRadius="$4" borderWidth={1} borderColor="$borderColor">
-          <Text fow="bold" fos="$2" color="$color">Edit Display Name</Text>
-          <Input
-            bg="$background"
-            borderColor="$borderColor"
-            focusStyle={{ borderColor: "$purple8" }}
-            color="$color"
-            value={editName}
-            onChangeText={setEditName}
-            size="$3"
-            borderRadius="$3"
-            maxLength={30}
-            placeholder="Enter username"
-            placeholderTextColor="$color8"
-          />
-          <Text fow="bold" fos="$2" color="$color">Select Avatar Preset</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetsScroll}>
-            {AVATAR_PRESETS.map((preset) => {
-              const isSelected = selectedAvatar === preset;
-              return (
-                <YStack
-                  key={preset}
-                  onPress={() => setSelectedAvatar(preset)}
-                  borderWidth={isSelected ? 3 : 1}
-                  borderColor={isSelected ? "$purple10" : "$borderColor"}
-                  borderRadius="$3"
-                  p="$1"
-                  bg={isSelected ? "$purple2" : "transparent"}
-                  pressStyle={{ opacity: 0.8 }}
-                >
-                  <Image source={{ uri: preset }} style={styles.presetImage} />
-                </YStack>
-              );
-            })}
-          </ScrollView>
-          <XStack gap="$2" mt="$2" jc="flex-end">
-            <Button size="$3" chromeless onPress={() => setIsEditing(false)} disabled={updating}>Cancel</Button>
-            <Button size="$3" bg="$purple10" color="white" onPress={onUpdateProfileDetails} disabled={updating}>
-              {updating ? <Spinner color="white" /> : "Save Changes"}
+        <YStack
+          w="100%"
+          gap="$3"
+          bg="$backgroundElement"
+          p="$4"
+          br="$4"
+          borderCurve="continuous"
+        >
+          <YStack gap="$2">
+            <Text color="$color" opacity={0.5} fos="$2" fow="600" tt="uppercase" ls={0.6}>
+              Display name
+            </Text>
+            <Input
+              bg="$background"
+              borderColor="$borderColor"
+              focusStyle={{ borderColor: "$purple8" }}
+              color="$color"
+              value={editName}
+              onChangeText={setEditName}
+              size="$3"
+              br="$2"
+              maxLength={30}
+              placeholder="Enter username"
+              placeholderTextColor="$color8"
+            />
+          </YStack>
+
+          <YStack gap="$2">
+            <Text color="$color" opacity={0.5} fos="$2" fow="600" tt="uppercase" ls={0.6}>
+              Avatar
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetsScroll}>
+              {AVATAR_PRESETS.map((preset) => {
+                const isSelected = selectedAvatar === preset;
+                return (
+                  <YStack
+                    key={preset}
+                    onPress={() => setSelectedAvatar(preset)}
+                    borderWidth={isSelected ? 2 : 1}
+                    borderColor={isSelected ? "$purple9" : "$borderColor"}
+                    br={12}
+                    p={2}
+                    pressStyle={{ opacity: 0.8 }}
+                  >
+                    <Image source={{ uri: preset }} style={styles.presetImage} />
+                  </YStack>
+                );
+              })}
+            </ScrollView>
+          </YStack>
+
+          <XStack gap="$2" jc="flex-end">
+            <Button size="$3" chromeless onPress={() => setIsEditing(false)} disabled={updating}>
+              <Text color="$color" fow="600">Cancel</Text>
+            </Button>
+            <Button size="$3" bg="$purple9" onPress={onUpdateProfileDetails} disabled={updating} pressStyle={{ opacity: 0.8 }}>
+              {updating ? <Spinner color="white" size="small" /> : <Text color="white" fow="700">Save</Text>}
             </Button>
           </XStack>
         </YStack>
@@ -168,8 +198,8 @@ export default function ProfileHeader({
 
 const styles = StyleSheet.create({
   avatarImage: { width: "100%", height: "100%" },
-  presetImage: { width: 44, height: 44 },
-  presetsScroll: { gap: 10, paddingVertical: 4 },
+  presetImage: { width: 44, height: 44, borderRadius: 8 },
+  presetsScroll: { gap: 8, paddingVertical: 2, paddingRight: 4 },
   editButton: {
     width: 26,
     height: 26,

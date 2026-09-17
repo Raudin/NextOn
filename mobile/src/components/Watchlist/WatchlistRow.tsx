@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { Text, XStack, YStack } from "tamagui";
 
-import WatchProgressBadge from "./WatchProgressBadge";
+import WatchProgressBar from "./WatchProgressBar";
 
 import {
   imageUrl,
@@ -71,36 +71,39 @@ export default function WatchlistRow({
           </Text>
         </YStack>
 
-        <XStack ai="center" jc="space-between" mt="$2">
-          <Text color="$color" opacity={0.42} fos="$2">
-            {(item.media_type || "movie").toUpperCase()}
-          </Text>
-          <XStack ai="center" gap="$2">
-            {typeof progress === "number" ? (
-              <WatchProgressBadge progress={progress} />
-            ) : null}
-            {selectionMode ? (
-              <YStack
-                w={28}
-                h={28}
-                borderRadius={999}
-                ai="center"
-                jc="center"
-                bg={selected ? "$red9" : "transparent"}
-                borderWidth={1}
-                borderColor={selected ? "$red9" : "rgba(255,255,255,0.35)"}
-              >
-                <Text color="$color" fos="$2">
-                  {selected ? "✓" : ""}
+        <YStack gap="$2" mt="$2">
+          {typeof progress === "number" ? (
+            <WatchProgressBar progress={progress} />
+          ) : null}
+
+          <XStack ai="center" jc="space-between">
+            <Text color="$color" opacity={0.42} fos="$2">
+              {(item.media_type || "movie").toUpperCase()}
+            </Text>
+            <XStack ai="center" gap="$2">
+              {selectionMode ? (
+                <YStack
+                  w={28}
+                  h={28}
+                  borderRadius={999}
+                  ai="center"
+                  jc="center"
+                  bg={selected ? "$red9" : "transparent"}
+                  borderWidth={1}
+                  borderColor={selected ? "$red9" : "$borderColor"}
+                >
+                  <Text color="$color" fos="$2">
+                    {selected ? "✓" : ""}
+                  </Text>
+                </YStack>
+              ) : typeof progress !== "number" ? (
+                <Text color="$color" opacity={0.65} fos="$2">
+                  {item.imdb_rating != null ? `IMDb ${item.imdb_rating.toFixed(1)}` : ""}
                 </Text>
-              </YStack>
-            ) : typeof progress !== "number" ? (
-              <Text color="$color" opacity={0.65} fos="$2">
-                {item.imdb_rating != null ? `IMDb ${item.imdb_rating.toFixed(1)}` : ""}
-              </Text>
-            ) : null}
+              ) : null}
+            </XStack>
           </XStack>
-        </XStack>
+        </YStack>
       </YStack>
     </XStack>
   );
