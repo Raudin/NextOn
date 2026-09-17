@@ -3,7 +3,14 @@ import { invalidateMediaCaches } from "@/lib/cache";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Linking, StyleSheet, TouchableOpacity } from "react-native";
+import { Check, Heart, Lock, Play, Plus } from "lucide-react-native";
+import {
+  Alert,
+  Linking,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 
@@ -30,6 +37,8 @@ import {
   type Season,
 } from "@/lib/media-api";
 import RatingLogo from "@/components/Discover/RatingLogo";
+import BackButton from "@/components/BackButton";
+import MediaToggleBadge from "@/components/MediaToggleBadge";
 
 export default function MediaDetailScreen() {
   const router = useRouter();
@@ -352,6 +361,35 @@ export default function MediaDetailScreen() {
     }
   };
 
+  const watchlistAction = useMemo(() => {
+    if (!inWatchlist) {
+      return {
+        label: "Watchlist",
+        icon: "plus" as const,
+        tone: "white" as const,
+      };
+    }
+    if (isUnreleased) {
+      return {
+        label: "Unreleased",
+        icon: "lock" as const,
+        tone: "muted" as const,
+      };
+    }
+    if (isSeen) {
+      return {
+        label: "Seen",
+        icon: "check" as const,
+        tone: "success" as const,
+      };
+    }
+    return {
+      label: "Mark as seen",
+      icon: "check" as const,
+      tone: "white" as const,
+    };
+  }, [inWatchlist, isUnreleased, isSeen]);
+
   const episodeKey = (season: number, episode: number) =>
     `${season}:${episode}`;
 
@@ -513,7 +551,7 @@ export default function MediaDetailScreen() {
             contentContainerStyle={{ paddingBottom: 120 }}
           >
             {/* Hero Backdrop */}
-            <YStack h={420} bg="#151515">
+            <YStack h={520} bg="#151515">
               {details.backdrop_path ? (
                 <Image
                   source={{
@@ -547,14 +585,7 @@ export default function MediaDetailScreen() {
                 p="$4"
               >
                 {/* Back button */}
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  style={styles.backButton}
-                >
-                  <Text color="white" fow="700" fos="$5">
-                    ‹
-                  </Text>
-                </TouchableOpacity>
+                <BackButton onPress={() => router.back()} />
 
                 {/* Bottom of hero: Status + Logo/Title + Meta + Genres */}
                 <YStack gap="$3" ai="center" w="100%">
@@ -679,83 +710,105 @@ export default function MediaDetailScreen() {
                   </XStack>
 
                   {/* Action Buttons in Banner */}
-                  <XStack gap="$3" ai="center" jc="center" mt="$2" w="100%">
+                  <XStack gap="$2" ai="center" jc="center" mt="$2" w="100%">
                     <Button
                       f={1}
                       size="$4"
                       borderRadius="$10"
-                      bg="rgba(255,255,255,0.15)"
+                      bg="rgba(20,20,24,0.55)"
                       color="white"
                       borderWidth={1}
-                      borderColor="rgba(255,255,255,0.2)"
+                      borderColor="rgba(255,255,255,0.28)"
+                      style={styles.actionButtonShadow}
                       disabled={
                         watchlistLoading ||
                         watchedLoading ||
                         (inWatchlist && isUnreleased)
                       }
                       onPress={handleWatchlistButtonPress}
-                      iconAfter={
+                      icon={
                         watchlistLoading || watchedLoading ? (
                           <Spinner size="small" color="white" />
-                        ) : undefined
+                        ) : watchlistAction.icon === "plus" ? (
+                          <Plus size={17} color="#FFFFFF" strokeWidth={2.6} />
+                        ) : watchlistAction.icon === "lock" ? (
+                          <Lock
+                            size={16}
+                            color="rgba(255,255,255,0.7)"
+                            strokeWidth={2.4}
+                          />
+                        ) : (
+                          <Check
+                            size={17}
+                            color={
+                              watchlistAction.tone === "success"
+                                ? "#4ADE80"
+                                : "#FFFFFF"
+                            }
+                            strokeWidth={3}
+                          />
+                        )
                       }
-                      h={44}
+                      h={46}
+                      px="$3"
                     >
-                      {!inWatchlist
-                        ? "+ Watchlist"
-                        : isUnreleased
-                          ? "Unreleased"
-                          : isSeen
-                            ? "✓ Seen"
-                            : "✔ Mark as seen"}
+                      {watchlistAction.label}
                     </Button>
 
                     {trailer ? (
                       <Button
                         size="$4"
                         borderRadius="$10"
-                        bg="rgba(255,255,255,0.15)"
+                        bg="rgba(20,20,24,0.55)"
                         color="white"
-                        fontWeight="700"
                         borderWidth={1}
-                        borderColor="rgba(255,255,255,0.2)"
+                        borderColor="rgba(255,255,255,0.28)"
+                        style={styles.actionButtonShadow}
                         onPress={openTrailer}
-                        px="$4"
-                        h={44}
+                        icon={<Play size={16} color="#FFFFFF" fill="#FFFFFF" />}
+                        px="$3"
+                        h={46}
                       >
-                        ▶ Trailer
+                        Trailer
                       </Button>
                     ) : null}
 
                     <Button
                       size="$4"
                       borderRadius="$10"
-                      w={44}
-                      h={44}
+                      w={46}
+                      h={46}
                       bg={
                         favorited
-                          ? "rgba(255, 50, 50, 0.2)"
-                          : "rgba(255,255,255,0.1)"
+                          ? "rgba(255, 60, 60, 0.35)"
+                          : "rgba(20,20,24,0.55)"
                       }
                       borderWidth={1}
                       borderColor={
                         favorited
-                          ? "rgba(255, 50, 50, 0.5)"
-                          : "rgba(255,255,255,0.2)"
+                          ? "rgba(255, 110, 110, 0.75)"
+                          : "rgba(255,255,255,0.28)"
                       }
+                      style={styles.actionButtonShadow}
                       disabled={favoriteLoading}
                       onPress={toggleFavorite}
                       p="$0"
                       jc="center"
                       ai="center"
+                      aria-label={
+                        favorited ? "Remove from favorites" : "Add to favorites"
+                      }
                     >
-                      <Text
-                        color={favorited ? "rgb(255, 80, 80)" : "white"}
-                        fos="$5"
-                        fow="700"
-                      >
-                        {favorited ? "♥" : "♡"}
-                      </Text>
+                      {favoriteLoading ? (
+                        <Spinner size="small" color="#FF5A5A" />
+                      ) : (
+                        <Heart
+                          size={20}
+                          color={favorited ? "#FF5A5A" : "#FFFFFF"}
+                          fill={favorited ? "#FF5A5A" : "transparent"}
+                          strokeWidth={2.2}
+                        />
+                      )}
                     </Button>
                   </XStack>
                 </YStack>
@@ -931,14 +984,20 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     // React Native doesn't support CSS gradients; use a layered approach
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "flex-start",
+  // Translucent, always-legible action buttons that sit on top of the backdrop.
+  actionButtonShadow: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  episodeThumb: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 4,
   },
   logoImage: {
     width: 220,
@@ -1102,13 +1161,14 @@ function EpisodeRowListItem({
         onPress={onPress}
       >
         {/* Left: Thumbnail Still Image */}
-        <YStack
-          w={120}
-          h={68}
-          borderRadius={8}
-          overflow="hidden"
-          bg="$backgroundElement"
-        >
+        <View style={styles.episodeThumb}>
+          <YStack
+            w={120}
+            h={84}
+            borderRadius={10}
+            overflow="hidden"
+            bg="$backgroundElement"
+          >
           {episode.still_path ? (
             <Image
               source={{
@@ -1143,7 +1203,8 @@ function EpisodeRowListItem({
               </Text>
             </YStack>
           )}
-        </YStack>
+          </YStack>
+        </View>
 
         {/* Middle: Content Stack */}
         <YStack f={1} gap="$1">
@@ -1190,24 +1251,18 @@ function EpisodeRowListItem({
                 onToggle();
               }}
               activeOpacity={epUnreleased ? 1 : 0.7}
-              style={{ padding: 8, opacity: epUnreleased ? 0.35 : 1 }}
+              hitSlop={8}
+              style={{
+                width: 40,
+                height: 40,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: epUnreleased ? 0.4 : 1,
+              }}
             >
-              <YStack
-                w={24}
-                h={24}
-                borderRadius={12}
-                borderWidth={2}
-                borderColor={watched ? "#2ecc71" : "$borderColor"}
-                bg="transparent"
-                ai="center"
-                jc="center"
-              >
-                {epUnreleased && (
-                  <Text color="$color" fos="$1">
-                    🔒
-                  </Text>
-                )}
-              </YStack>
+              <MediaToggleBadge
+                state={epUnreleased ? "locked" : watched ? "active" : "idle"}
+              />
             </TouchableOpacity>
           );
         })()}

@@ -133,6 +133,7 @@ export const cache = new CacheManager();
 export const MEDIA_CACHE_KEYS = [
   "watchlist_items",
   "watchlist_show_progress",
+  "watchlist_show_progress_v2",
   "home_watchlist_items",
   "home_watched_history",
   "discover_watchlist_ids",

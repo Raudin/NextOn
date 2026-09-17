@@ -552,31 +552,26 @@ export default function HomeScreen() {
         <YStack f={1} px="$4" gap="$4">
 
           {/* Top Tabs Toggle: Shows vs Movies */}
-          <XStack mt="$2" ai="center" jc="space-between">
-            <XStack gap="$3" ai="center">
-              {(["tv", "movies"] as const).map((tab) => {
-                const active = activeTab === tab;
-                return (
-                  <Text
-                    key={tab}
-                    color="$color"
-                    opacity={active ? 1 : 0.6}
-                    fow={active ? "900" : "700"}
-                    fos={active ? "$10" : "$9"}
-                    pressStyle={{ opacity: 0.75 }}
-                    onPress={() => setActiveTab(tab)}
-                  >
-                    {tab === "movies" ? "Movies" : "Shows"}
-                  </Text>
-                );
-              })}
-              {backgroundRefreshing && (
-                <Spinner size="small" color="$color" opacity={0.6} />
-              )}
-            </XStack>
-            <Button size="$3" circular chromeless onPress={() => loadData(true)}>
-              ↻
-            </Button>
+          <XStack mt="$2" gap="$3" ai="center">
+            {(["tv", "movies"] as const).map((tab) => {
+              const active = activeTab === tab;
+              return (
+                <Text
+                  key={tab}
+                  color="$color"
+                  opacity={active ? 1 : 0.6}
+                  fow={active ? "900" : "700"}
+                  fos={active ? "$10" : "$9"}
+                  pressStyle={{ opacity: 0.75 }}
+                  onPress={() => setActiveTab(tab)}
+                >
+                  {tab === "movies" ? "Movies" : "Shows"}
+                </Text>
+              );
+            })}
+            {backgroundRefreshing && (
+              <Spinner size="small" color="$color" opacity={0.6} />
+            )}
           </XStack>
 
           {loading ? (

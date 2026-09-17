@@ -1,5 +1,7 @@
 import Svg, { Circle } from "react-native-svg";
-import { useTheme, YStack } from "tamagui";
+import { YStack } from "tamagui";
+
+import { useProgressTheme } from "./useProgressTheme";
 
 interface WatchProgressBadgeProps {
   progress: number;
@@ -8,14 +10,8 @@ interface WatchProgressBadgeProps {
 export default function WatchProgressBadge({
   progress,
 }: WatchProgressBadgeProps) {
-  const theme = useTheme();
-  const percentage = Math.max(0, Math.min(100, Math.round(progress * 100)));
-  const accent =
-    percentage >= 80
-      ? (theme.green9?.val ?? "#22C55E")
-      : percentage >= 45
-        ? (theme.orange9?.val ?? "#F97316")
-        : (theme.red9?.val ?? "#EF4444");
+  const { percentage, accent, surface, borderTone, trackColor } =
+    useProgressTheme(progress);
 
   const size = 20;
   const strokeWidth = 3;
@@ -30,7 +26,9 @@ export default function WatchProgressBadge({
       borderRadius={999}
       ai="center"
       jc="center"
-      bg="rgba(0,0,0,0.82)"
+      bg={surface}
+      borderWidth={1}
+      borderColor={borderTone}
       shadowColor="#000"
       shadowOpacity={0.3}
       shadowRadius={8}
@@ -41,7 +39,7 @@ export default function WatchProgressBadge({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="rgba(255,255,255,0.22)"
+          stroke={trackColor}
           strokeWidth={strokeWidth}
           fill="transparent"
         />

@@ -1,9 +1,26 @@
 import React from "react";
-import { Modal, Pressable, ScrollView, StyleSheet } from "react-native";
-import { SymbolView } from "expo-symbols";
-import { Host, Switch as NativeSwitch } from "@expo/ui";
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  Bell,
+  ChevronRight,
+  LogOut,
+  RotateCcw,
+  SunMoon,
+  Trash,
+  type LucideIcon,
+} from "lucide-react-native";
 import { Button, Text, XStack, YStack } from "tamagui";
 import { type User } from "@/lib/media-api";
+import { useTheme } from "@/hooks/use-theme";
+import {
+  Group,
+  IconTile,
+  LIST_ROW_GAP,
+  LIST_ROW_PADDING,
+  SectionHeader,
+  Separator,
+} from "@/components/Profile/grouped-list";
 
 interface PreferencesSectionProps {
   isOpen: boolean;
@@ -17,27 +34,52 @@ interface PreferencesSectionProps {
   onLogout: () => void;
 }
 
+const DESTRUCTIVE = "#FF3B30";
+
 type SettingsRowProps = {
-  symbol: string;
+  icon: LucideIcon;
   title: string;
   subtitle?: string;
   tint?: string;
+  destructive?: boolean;
   onPress?: () => void;
   trailing?: React.ReactNode;
 };
 
-function SettingsRow({ symbol, title, subtitle, tint = "#6E6E73", onPress, trailing }: SettingsRowProps) {
+function SettingsRow({
+  icon,
+  title,
+  subtitle,
+  tint = "#8E8E93",
+  destructive = false,
+  onPress,
+  trailing,
+}: SettingsRowProps) {
+  const theme = useTheme();
+
   return (
-    <Pressable onPress={onPress} disabled={!onPress} style={({ pressed }) => [styles.rowPressable, pressed && styles.pressed]}>
-      <XStack ai="center" gap="$3" p="$3" minHeight={64}>
-        <YStack w={30} h={30} br="$2" bg="$background" ai="center" jc="center">
-          <SymbolView name={{ ios: symbol as never, android: "settings", web: "settings" }} size={17} tintColor={tint} />
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={({ pressed }) => (pressed && onPress ? styles.pressed : undefined)}
+    >
+      <XStack ai="center" gap={LIST_ROW_GAP} px={LIST_ROW_PADDING} minHeight={subtitle ? 60 : 52}>
+        <IconTile icon={icon} tint={destructive ? DESTRUCTIVE : tint} />
+        <YStack f={1} gap={1}>
+          <Text color={destructive ? "$red10" : "$color"} fow="500" fos="$3">
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text color="$color" opacity={0.5} fos="$1">
+              {subtitle}
+            </Text>
+          ) : null}
         </YStack>
-        <YStack f={1} gap="$0.5">
-          <Text color="$color" fow="600" fos="$3">{title}</Text>
-          {subtitle && <Text color="$color" opacity={0.5} fos="$1">{subtitle}</Text>}
-        </YStack>
-        {trailing}
+        {trailing !== undefined ? (
+          trailing
+        ) : onPress ? (
+          <ChevronRight size={16} color={theme.textSecondary} strokeWidth={2.4} />
+        ) : null}
       </XStack>
     </Pressable>
   );
@@ -54,92 +96,154 @@ export default function PreferencesSection({
   onDeleteAccount,
   onLogout,
 }: PreferencesSectionProps) {
-  if (!isOpen) return null;
+  const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
   return (
     <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.sheetContainer} onPress={(event) => event.stopPropagation()}>
-          <YStack bg="$background" borderTopLeftRadius="$6" borderTopRightRadius="$6" p="$4" gap="$4" style={styles.sheet}>
-            <YStack ai="center" gap="$3">
-              <YStack w={36} h={4} br="$2" bg="$color" opacity={0.2} />
-              <XStack jc="space-between" ai="center" w="100%">
-                <YStack gap="$0.5">
-                  <Text fow="800" fos="$7" color="$color">Settings</Text>
-                  <Text fos="$2" color="$color" opacity={0.55}>Manage your NextOn experience</Text>
-                </YStack>
-                <Button size="$3" circular chromeless onPress={onClose} accessibilityLabel="Close settings">
-                  <SymbolView name={{ ios: "xmark", android: "close", web: "close" }} size={18} tintColor="#6E6E73" />
-                </Button>
-              </XStack>
-            </YStack>
+      <View style={styles.overlay}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityLabel="Close settings"
+        />
 
-            <ScrollView showsVerticalScrollIndicator={false} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
-              <YStack gap="$4">
-                <YStack gap="$2">
-                  <Text fow="700" fos="$2" color="$color" opacity={0.55} px="$1">PREFERENCES</Text>
-                  <YStack bg="$backgroundElement" borderRadius="$4" borderCurve="continuous" overflow="hidden">
-                    <SettingsRow
-                      symbol="bell"
-                      title="Notifications"
-                      subtitle="Air date and show updates"
-                      trailing={
-                        <Host>
-                          <NativeSwitch value={!!profileUser.notifications_enabled} onValueChange={onToggleNotifications} />
-                        </Host>
-                      }
-                    />
-                    <YStack h={StyleSheet.hairlineWidth} bg="$borderColor" ml={66} />
-                    <SettingsRow
-                      symbol="circle.lefthalf.filled"
-                      title="Appearance"
-                      subtitle="Choose light, dark, or system"
-                      onPress={onCycleAppearance}
-                      trailing={<Text color="$purple10" fow="700" fos="$2" tt="capitalize">{themeMode}</Text>}
-                    />
-                  </YStack>
-                </YStack>
-
-                <YStack gap="$2">
-                  <Text fow="700" fos="$2" color="$color" opacity={0.55} px="$1">PRIVACY & DATA</Text>
-                  <YStack bg="$backgroundElement" borderRadius="$4" borderCurve="continuous" overflow="hidden">
-                    <SettingsRow
-                      symbol="clock.arrow.circlepath"
-                      title="Clear watch history"
-                      subtitle="Reset stats, levels, and streaks"
-                      tint="#FF3B30"
-                      onPress={() => { onClose(); onClearHistory(); }}
-                      trailing={<SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={15} tintColor="#8E8E93" />}
-                    />
-                    <YStack h={StyleSheet.hairlineWidth} bg="$borderColor" ml={66} />
-                    <SettingsRow
-                      symbol="trash"
-                      title="Delete account"
-                      subtitle="Permanently erase all profile data"
-                      tint="#FF3B30"
-                      onPress={() => { onClose(); onDeleteAccount(); }}
-                      trailing={<SymbolView name={{ ios: "chevron.right", android: "chevron_right", web: "chevron_right" }} size={15} tintColor="#8E8E93" />}
-                    />
-                  </YStack>
-                </YStack>
-
-                <Button size="$4" bg="$red2" color="$red10" borderColor="$red8" borderWidth={1} onPress={() => { onClose(); onLogout(); }}>
-                  Log Out
-                </Button>
-              </YStack>
-            </ScrollView>
+        <YStack
+          bg="$background"
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+          ]}
+        >
+          <YStack ai="center" pt={8}>
+            <YStack w={36} h={4} br={2} bg="$color" opacity={0.2} />
           </YStack>
-        </Pressable>
-      </Pressable>
+
+          <XStack ai="center" jc="space-between" px={18} py={10}>
+            <Text fow="800" fos="$7" color="$color">
+              Settings
+            </Text>
+            <Button
+              size="$3"
+              chromeless
+              onPress={onClose}
+              pressStyle={{ opacity: 0.5 }}
+              accessibilityLabel="Done"
+            >
+              <Text color="$purple10" fow="700" fos="$4">
+                Done
+              </Text>
+            </Button>
+          </XStack>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            style={styles.scroller}
+            contentContainerStyle={styles.content}
+          >
+            <YStack gap={24}>
+              <YStack gap={8}>
+                <SectionHeader>Preferences</SectionHeader>
+                <Group>
+                  <SettingsRow
+                    icon={Bell}
+                    tint="#FF9500"
+                    title="Notifications"
+                    trailing={
+                      <Switch
+                        value={!!profileUser.notifications_enabled}
+                        onValueChange={onToggleNotifications}
+                        trackColor={{ false: theme.backgroundSelected, true: "#34C759" }}
+                        ios_backgroundColor={theme.backgroundSelected}
+                      />
+                    }
+                  />
+                  <Separator />
+                  <SettingsRow
+                    icon={SunMoon}
+                    tint="#5856D6"
+                    title="Appearance"
+                    onPress={onCycleAppearance}
+                    trailing={
+                      <XStack ai="center" gap={6}>
+                        <Text color="$color" opacity={0.5} fos="$3" tt="capitalize">
+                          {themeMode}
+                        </Text>
+                        <ChevronRight size={16} color={theme.textSecondary} strokeWidth={2.4} />
+                      </XStack>
+                    }
+                  />
+                </Group>
+              </YStack>
+
+              <YStack gap={8}>
+                <SectionHeader>Privacy & data</SectionHeader>
+                <Group>
+                  <SettingsRow
+                    icon={RotateCcw}
+                    destructive
+                    title="Clear watch history"
+                    trailing={null}
+                    onPress={() => {
+                      onClose();
+                      onClearHistory();
+                    }}
+                  />
+                  <Separator />
+                  <SettingsRow
+                    icon={Trash}
+                    destructive
+                    title="Delete account"
+                    trailing={null}
+                    onPress={() => {
+                      onClose();
+                      onDeleteAccount();
+                    }}
+                  />
+                </Group>
+              </YStack>
+
+              <Group>
+                <Pressable
+                  onPress={() => {
+                    onClose();
+                    onLogout();
+                  }}
+                  style={({ pressed }) => (pressed ? styles.pressed : undefined)}
+                >
+                  <XStack ai="center" jc="center" gap={8} minHeight={52} px={LIST_ROW_PADDING}>
+                    <LogOut size={17} color="#FF3B30" strokeWidth={2.4} />
+                    <Text color="$red10" fow="600" fos="$3">
+                      Log out
+                    </Text>
+                  </XStack>
+                </Pressable>
+              </Group>
+            </YStack>
+          </ScrollView>
+        </YStack>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.4)", justifyContent: "flex-end" },
-  sheetContainer: { width: "100%", maxWidth: 560, alignSelf: "center" },
-  sheet: { maxHeight: "88%" },
-  content: { paddingBottom: 16, gap: 16 },
-  rowPressable: { minHeight: 64 },
-  pressed: { opacity: 0.65 },
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    width: "100%",
+    maxWidth: 560,
+    alignSelf: "center",
+    maxHeight: "88%",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: "hidden",
+  },
+  /** Shrinks against the sheet's maxHeight so the content scrolls instead of clipping. */
+  scroller: { flexShrink: 1 },
+  content: { paddingHorizontal: 18, paddingBottom: 16 },
+  pressed: { opacity: 0.6 },
 });

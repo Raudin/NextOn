@@ -1,29 +1,38 @@
 import React from "react";
-import { Button } from "tamagui";
+import type { GestureResponderEvent } from "react-native";
+import { Pressable } from "react-native";
+
+import MediaToggleBadge from "../MediaToggleBadge";
 
 interface WatchlistButtonProps {
   added: boolean;
   onPress: () => void;
 }
 
-export default function WatchlistButton({ added, onPress }: WatchlistButtonProps) {
+/**
+ * Circular add/remove affordance overlaid on Discover artwork. Uses the same
+ * MediaToggleBadge as the episode "seen" toggles so every mark action in the
+ * app looks identical.
+ */
+export default function WatchlistButton({
+  added,
+  onPress,
+}: WatchlistButtonProps) {
   return (
-    <Button
-      pos="absolute"
-      bottom="$2"
-      right="$2"
-      size="$2"
-      circular
-      bg={added ? "$purple9" : "rgba(0,0,0,0.72)"}
-      color="white"
-      borderWidth={1}
-      borderColor={added ? "$purple7" : "rgba(255,255,255,0.2)"}
-      onPress={(event: any) => {
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={added ? "Remove from watchlist" : "Add to watchlist"}
+      hitSlop={8}
+      onPress={(event: GestureResponderEvent) => {
         event?.stopPropagation?.();
         onPress();
       }}
+      style={({ pressed }) => [
+        { position: "absolute", right: 8, bottom: 8 },
+        pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
+      ]}
     >
-      {added ? "✓" : "+"}
-    </Button>
+      <MediaToggleBadge state={added ? "active" : "idle"} onArtwork />
+    </Pressable>
   );
 }

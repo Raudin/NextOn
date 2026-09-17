@@ -1,9 +1,11 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Check, Lock } from "lucide-react-native";
 import { useEffect, useState, useMemo } from "react";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import BackButton from "@/components/BackButton";
 import { useAuth } from "@/context/AuthContext";
 import { invalidateMediaCaches } from "@/lib/cache";
 
@@ -166,8 +168,8 @@ export default function EpisodeDetailScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
           >
-            {/* Hero Backdrop - 420px height like [id].tsx */}
-            <YStack h={420} bg="#151515">
+            {/* Hero Backdrop */}
+            <YStack h={520} bg="#151515">
               {episode.still_path ? (
                 <Image
                   source={{
@@ -213,14 +215,7 @@ export default function EpisodeDetailScreen() {
                 p="$4"
               >
                 {/* Back button */}
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  style={styles.backButton}
-                >
-                  <Text color="white" fow="700" fos="$5">
-                    ‹
-                  </Text>
-                </TouchableOpacity>
+                <BackButton onPress={() => router.back()} />
 
                 {/* Bottom of hero: Title & Metadata & Action Button */}
                 <YStack gap="$3" ai="center" w="100%">
@@ -275,16 +270,46 @@ export default function EpisodeDetailScreen() {
                       f={1}
                       size="$4"
                       borderRadius="$10"
-                      bg={watched ? "rgba(255,255,255,0.15)" : "transparent"}
+                      bg={
+                        watched
+                          ? "rgba(34, 165, 89, 0.42)"
+                          : "rgba(20,20,24,0.55)"
+                      }
                       color="white"
                       borderWidth={1}
-                      borderColor={watched ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.4)"}
+                      borderColor={
+                        watched
+                          ? "rgba(120, 235, 165, 0.65)"
+                          : "rgba(255,255,255,0.28)"
+                      }
+                      style={styles.actionButtonShadow}
                       disabled={toggling || isEpisodeUnreleased}
                       onPress={toggleWatched}
-                      iconAfter={toggling ? <Spinner size="small" color="white" /> : undefined}
-                      h={44}
+                      icon={
+                        toggling ? (
+                          <Spinner size="small" color="white" />
+                        ) : isEpisodeUnreleased ? (
+                          <Lock
+                            size={16}
+                            color="rgba(255,255,255,0.7)"
+                            strokeWidth={2.4}
+                          />
+                        ) : (
+                          <Check
+                            size={17}
+                            color="#FFFFFF"
+                            strokeWidth={3}
+                          />
+                        )
+                      }
+                      h={46}
+                      px="$3"
                     >
-                      {isEpisodeUnreleased ? "Unreleased" : watched ? "✓ Watched" : "+ Mark as Watched"}
+                      {isEpisodeUnreleased
+                        ? "Unreleased"
+                        : watched
+                          ? "Watched"
+                          : "Mark as Watched"}
                     </Button>
                   </XStack>
                 </YStack>
@@ -318,14 +343,13 @@ const styles = StyleSheet.create({
     height: "65%",
     backgroundColor: "transparent",
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "flex-start",
+  // Translucent, always-legible action button that sits on top of the backdrop.
+  actionButtonShadow: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 6,
   },
   titleText: {
     textShadowColor: "rgba(0,0,0,0.8)",
