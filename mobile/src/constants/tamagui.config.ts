@@ -30,6 +30,10 @@ const config = createTamagui({
 export type AppConfig = typeof config
 
 declare module 'tamagui' {
+  // Declaration merging: this interface is intentionally empty and gains its
+  // members from AppConfig. The lint rule that flags empty interfaces does not
+  // apply to module augmentation.
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface TamaguiCustomConfig extends AppConfig {}
 }
 

@@ -5,12 +5,8 @@ import { Text, YStack } from "tamagui";
 import RatingBadge from "./RatingBadge";
 import WatchlistButton from "./WatchlistButton";
 
-import {
-  imageUrl,
-  mediaTitle,
-  releaseYear,
-  type TMDBMedia,
-} from "@/lib/media-api";
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
+import { mediaTitle, releaseYear, type TMDBMedia } from "@/lib/media-api";
 
 /** Poster artwork ratio shared with the watchlist grid cards. */
 const POSTER_RATIO = 1.48;
@@ -53,6 +49,9 @@ export default function MediaCard({
     wide && !grid ? item.backdrop_path || item.poster_path : item.poster_path;
   const year = releaseYear(item);
   const meta = subtitle ?? year;
+  // The wide carousel card draws a backdrop at 260x146pt; everything else is a
+  // poster, and the grid/compact cards are small enough for the lower bucket.
+  const imageRole = wide && !grid ? "backdrop" : "posterCard";
 
   return (
     <YStack
@@ -72,10 +71,12 @@ export default function MediaCard({
       >
         {artPath ? (
           <Image
-            source={{ uri: imageUrl(artPath) }}
+            source={{ uri: imageUrl(artPath, imageRole) }}
             style={{ width: "100%", height: "100%" }}
             contentFit="cover"
-            transition={250}
+            cachePolicy={imageCachePolicy(imageRole)}
+            transition={imageTransitionMs(imageRole)}
+            recyclingKey={artPath}
           />
         ) : (
           <YStack f={1} ai="center" jc="center">
@@ -83,7 +84,7 @@ export default function MediaCard({
           </YStack>
         )}
 
-        <RatingBadge item={item} />
+      <RatingBadge item={item} />
         <WatchlistButton added={added} onPress={onToggle} />
       </YStack>
 

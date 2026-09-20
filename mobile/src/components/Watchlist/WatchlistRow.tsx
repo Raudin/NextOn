@@ -3,8 +3,8 @@ import { Text, XStack, YStack } from "tamagui";
 
 import WatchProgressBar from "./WatchProgressBar";
 
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
 import {
-  imageUrl,
   mediaTitle,
   releaseYear,
   type TMDBMedia,
@@ -48,9 +48,14 @@ export default function WatchlistRow({
       >
         {item.poster_path ? (
           <Image
-            source={{ uri: imageUrl(item.poster_path) }}
+            // 78x116pt: the small role keeps this thumbnail at a fraction of
+            // the bytes the old w500 request pulled down.
+            source={{ uri: imageUrl(item.poster_path, "posterCell") }}
             style={{ width: "100%", height: "100%" }}
             contentFit="cover"
+            cachePolicy={imageCachePolicy("posterCell")}
+            transition={imageTransitionMs("posterCell")}
+            recyclingKey={item.poster_path}
           />
         ) : (
           <YStack f={1} ai="center" jc="center">

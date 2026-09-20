@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,9 +9,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
+
+// This file is deliberately limited to talking to OMDb. Deciding *whether* to
+// call it, and remembering the answer, belongs to ratings.go — the in-process
+// response cache that used to live here was unbounded, had no TTL, and blocked
+// list requests, so it has been removed entirely in favour of the MediaRating
+// table.
 
 type omdbRating struct {
 	Source string `json:"Source"`
@@ -25,11 +31,6 @@ type omdbResponse struct {
 }
 
 var omdbHTTPClient = &http.Client{Timeout: 8 * time.Second}
-
-var omdbCache = struct {
-	sync.Mutex
-	items map[string]TMDBMedia
-}{items: make(map[string]TMDBMedia)}
 
 func parseOMDbNumber(value string) (float64, bool) {
 	value = strings.TrimSpace(strings.TrimSuffix(value, "%"))
@@ -50,34 +51,45 @@ func omdbURL(apiKey, title, year, imdbID string) string {
 	return "https://www.omdbapi.com/?" + params.Encode()
 }
 
-func fetchOMDbRatings(apiKey, title, year, imdbID string) (TMDBMedia, error) {
+// fetchOMDbRatings performs a single OMDb lookup.
+//
+// The boolean reports whether OMDb actually had a record. Callers must persist
+// that negative result, otherwise unknown titles are re-queried forever.
+//
+// This always performs the HTTP request — it has no cache. Callers are
+// responsible for checking the MediaRating table first.
+func fetchOMDbRatings(apiKey, title, year, imdbID string, scopes ...*callScope) (TMDBMedia, bool, error) {
 	var result TMDBMedia
 	if apiKey == "" || apiKey == "dummy" || (title == "" && imdbID == "") {
-		return result, nil
+		return result, false, nil
 	}
-	key := omdbURL(apiKey, title, year, imdbID)
-	omdbCache.Lock()
-	if cached, ok := omdbCache.items[key]; ok {
-		omdbCache.Unlock()
-		return cached, nil
-	}
-	omdbCache.Unlock()
 
-	resp, err := omdbHTTPClient.Get(key)
+	requestURL := omdbURL(apiKey, title, year, imdbID)
+	firstScope(scopes).addOMDb()
+	metrics.recordOMDbFetch()
+
+	// Smooth bursts; a refusal is non-fatal by design (see tokenBucket.take).
+	omdbLimiter.take(context.Background(), outboundWaitMax)
+
+	resp, err := omdbHTTPClient.Get(requestURL)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("OMDb API returned status code %d", resp.StatusCode)
+		return result, false, fmt.Errorf("OMDb API returned status code %d", resp.StatusCode)
 	}
+
 	var data omdbResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return result, err
+		return result, false, err
 	}
 	if strings.EqualFold(data.Response, "False") {
-		return result, nil
+		// OMDb knows nothing about this title. Not an error, but not a hit
+		// either — the caller records it as a negative cache entry.
+		return result, false, nil
 	}
+
 	if value, ok := parseOMDbNumber(data.IMDB); ok {
 		result.IMDBRating = &value
 	}
@@ -93,10 +105,8 @@ func fetchOMDbRatings(apiKey, title, year, imdbID string) (TMDBMedia, error) {
 			}
 		}
 	}
-	omdbCache.Lock()
-	omdbCache.items[key] = result
-	omdbCache.Unlock()
-	return result, nil
+
+	return result, true, nil
 }
 
 func applyOMDbRatings(item *TMDBMedia, ratings TMDBMedia) {
@@ -105,43 +115,13 @@ func applyOMDbRatings(item *TMDBMedia, ratings TMDBMedia) {
 	item.RottenTomatoes = ratings.RottenTomatoes
 }
 
-func enrichMediaRatings(items []TMDBMedia) {
-	apiKey := strings.TrimSpace(getOMDbAPIKey())
-	if apiKey == "" || apiKey == "dummy" {
-		return
-	}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
-	for i := range items {
-		if items[i].Title == "" && items[i].Name == "" {
-			continue
-		}
-		item := &items[i]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			title := item.Title
-			if title == "" {
-				title = item.Name
-			}
-			date := item.ReleaseDate
-			if date == "" {
-				date = item.FirstAirDate
-			}
-			year := ""
-			if len(date) >= 4 {
-				year = date[:4]
-			}
-			if ratings, err := fetchOMDbRatings(apiKey, title, year, ""); err == nil {
-				applyOMDbRatings(item, ratings)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func getOMDbAPIKey() string {
 	return strings.TrimSpace(os.Getenv("OMDB_API_KEY"))
+}
+
+// omdbEnabled reports whether rating lookups are possible at all, so callers
+// can skip the whole code path (and the DB read) when they are not.
+func omdbEnabled() bool {
+	apiKey := getOMDbAPIKey()
+	return apiKey != "" && apiKey != "dummy"
 }

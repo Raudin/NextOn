@@ -36,6 +36,16 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# Go build scratch (redirected into the repo so builds work under a confined
+# sandbox that cannot write to the default GOCACHE under %LOCALAPPDATA%)
+/.gocache/
+/.gotmp/
+/.gomodcache/
+
+# Go build/test binaries and a local package-manager store
+*.exe
+/.pnpm-store/
+
 example
 
 # generated native folders

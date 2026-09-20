@@ -20,9 +20,9 @@ export default function RatingBadge({ item }: RatingBadgeProps) {
     <XStack
       pos="absolute"
       top={6}
-      right={6}
+      right={1}
       bg="rgba(0,0,0,0.72)"
-      px={4}
+      px={2}
       py={2}
       borderRadius="$2"
       ai="center"

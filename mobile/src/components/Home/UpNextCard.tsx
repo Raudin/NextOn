@@ -4,11 +4,11 @@ import { Image } from "expo-image";
 import { Animated, StyleSheet } from "react-native";
 import { Button, Spinner, Text, XStack, YStack } from "tamagui";
 
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
 import {
   fetchMediaDetails,
   fetchSeasonEpisodes,
   fetchWatchedStatus,
-  imageUrl,
   markWatched,
   mediaTitle,
   type Episode,
@@ -251,7 +251,7 @@ export default function UpNextCard({
   const seasonStr = String(episode.season_number).padStart(2, "0");
   const episodeStr = String(episode.episode_number).padStart(2, "0");
 
-  const showPoster = show.poster_path ? imageUrl(show.poster_path) : null;
+  const showPoster = show.poster_path ? imageUrl(show.poster_path, "posterCell") : null;
 
   return (
     <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
@@ -280,6 +280,9 @@ export default function UpNextCard({
                 source={{ uri: showPoster }}
                 style={styles.posterImage}
                 contentFit="cover"
+                cachePolicy={imageCachePolicy("posterCell")}
+                transition={imageTransitionMs("posterCell")}
+                recyclingKey={show.poster_path}
               />
             ) : (
               <YStack f={1} ai="center" jc="center">

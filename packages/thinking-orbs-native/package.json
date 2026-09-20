@@ -1,0 +1,41 @@
+{
+  "name": "thinking-orbs-native",
+  "version": "0.1.0",
+  "description": "Dotted thought-orb loading indicators for React Native (Skia) — port of thinking-orbs",
+  "main": "./src/index.ts",
+  "react-native": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "sideEffects": false,
+  "peerDependencies": {
+    "@shopify/react-native-skia": ">=1.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.72.0",
+    "react-native-reanimated": ">=3.0.0"
+  },
+  "dependencies": {
+    "thinking-orbs": "^0.3.1"
+  },
+  "keywords": [
+    "react-native",
+    "skia",
+    "loading",
+    "loader",
+    "spinner",
+    "ai",
+    "agent",
+    "animation",
+    "dark-mode"
+  ],
+  "author": "Jakub Antalik",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jakubantalik/Libraries.dev.git",
+    "directory": "packages/thinking-orbs/ports/react-native/thinking-orbs-native"
+  },
+  "homepage": "https://orbs.jakubantalik.com"
+}

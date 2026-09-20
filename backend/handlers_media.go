@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,13 +20,14 @@ func handleSearch(c *gin.Context) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := scopeFrom(c)
 
 	searchURL := "https://api.themoviedb.org/3/search/multi"
 	var response TMDBResponse
 	if err := tmdbGetWithParams(searchURL, apiKey, map[string]string{
 		"query":         query,
 		"include_adult": "false",
-	}, &response); err != nil {
+	}, &response, scope); err != nil {
 		log.Printf("Error searching TMDB: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to search media"})
 		return
@@ -38,7 +40,7 @@ func handleSearch(c *gin.Context) {
 		}
 		results = append(results, item)
 	}
-	enrichMediaRatings(results)
+	enrichMediaRatings(results, scope)
 
 	c.JSON(http.StatusOK, results)
 }
@@ -68,6 +70,7 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := scopeFrom(c)
 	var details *MediaDetails
 
 	if apiKey == "dummy" {
@@ -82,7 +85,7 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 		if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
 			"append_to_response":     "credits,images,videos,external_ids",
 			"include_image_language": "en,null",
-		}, &response); err != nil {
+		}, &response, scope); err != nil {
 			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
 			var ok bool
 			details, ok = getMockMediaDetails(mediaType, id)
@@ -105,8 +108,13 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			if len(date) >= 4 {
 				year = date[:4]
 			}
-			if ratings, err := fetchOMDbRatings(getOMDbAPIKey(), title, year, response.ExternalIDs.IMDBID); err == nil {
-				applyOMDbRatings(&detailsVal.TMDBMedia, ratings)
+			if ratings, found, err := fetchOMDbRatings(getOMDbAPIKey(), title, year, response.ExternalIDs.IMDBID, scope); err == nil {
+				if found {
+					applyOMDbRatings(&detailsVal.TMDBMedia, ratings)
+				}
+				// Persist even a negative result so the background worker and
+				// future list requests do not re-query this title.
+				storeRating(mediaType, id, title, year, ratings, found)
 			}
 			detailsVal.Cast = topCast(response.Credits.Cast, 12)
 			// Pick up to 3 English logos
@@ -115,6 +123,7 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 				logos = logos[:3]
 			}
 			detailsVal.Logos = logos
+			detailsVal.Posters = topPosters(response.Images.Posters, 3)
 			// Pick YouTube trailers only
 			var trailers []Video
 			for _, v := range response.Videos.Results {
@@ -149,6 +158,7 @@ func handleSeasonDetails(c *gin.Context) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := scopeFrom(c)
 	var season *SeasonDetails
 
 	if apiKey == "dummy" {
@@ -161,7 +171,7 @@ func handleSeasonDetails(c *gin.Context) {
 	} else {
 		seasonURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d", seriesID, seasonNum)
 		var s SeasonDetails
-		if err := tmdbGet(seasonURL, apiKey, &s); err != nil {
+		if err := tmdbGet(seasonURL, apiKey, &s, scope); err != nil {
 			log.Printf("Error fetching TMDB season details: %v. Falling back to mock.", err)
 			var ok bool
 			season, ok = getMockSeasonDetails(seriesID, seasonNum)
@@ -194,6 +204,7 @@ func handleEpisodeDetails(c *gin.Context) {
 	}
 
 	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := scopeFrom(c)
 	var episode *Episode
 
 	if apiKey == "dummy" {
@@ -206,7 +217,7 @@ func handleEpisodeDetails(c *gin.Context) {
 	} else {
 		episodeURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d/episode/%d", seriesID, seasonNum, episodeNum)
 		var ep Episode
-		if err := tmdbGet(episodeURL, apiKey, &ep); err != nil {
+		if err := tmdbGet(episodeURL, apiKey, &ep, scope); err != nil {
 			log.Printf("Error fetching TMDB episode details: %v. Falling back to mock.", err)
 			var ok bool
 			episode, ok = getMockEpisodeDetails(seriesID, seasonNum, episodeNum)
@@ -233,6 +244,23 @@ func handleDiscover(c *gin.Context) {
 	}
 	discoverCache.RUnlock()
 
+	// 1b. Shared cache. This endpoint is public and identical for every user,
+	// so Redis is pure upside: it survives restarts (which otherwise cost three
+	// TMDB calls plus OMDb enrichment) and is shared across replicas. A miss or
+	// an outage falls through to the in-process path below.
+	sharedKey := redisNamedKey("discover", "v1")
+	if payload, ok := redisGet(sharedKey); ok {
+		var cached DiscoverResponse
+		if err := json.Unmarshal(payload, &cached); err == nil {
+			discoverCache.Lock()
+			discoverCache.data = &cached
+			discoverCache.expiresAt = time.Now().Add(discoverCache.duration)
+			discoverCache.Unlock()
+			c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+			return
+		}
+	}
+
 	// 2. Cache expired or empty: Acquire Write Lock
 	discoverCache.Lock()
 	defer discoverCache.Unlock()
@@ -244,21 +272,22 @@ func handleDiscover(c *gin.Context) {
 	}
 
 	log.Println("Cache expired or empty. Fetching fresh data...")
+	scope := scopeFrom(c)
 	var data *DiscoverResponse
 	var err error
 	if os.Getenv("TMDB_API_KEY") == "dummy" {
 		data = getMockDiscoverData()
 	} else {
-		data, err = fetchDiscoverData()
+		data, err = fetchDiscoverData(scope)
 		if err != nil {
 			log.Printf("Error fetching discover data: %v. Falling back to mock.", err)
 			data = getMockDiscoverData()
 			err = nil
 		}
 	}
-	enrichMediaRatings(data.Trending)
-	enrichMediaRatings(data.Popular)
-	enrichMediaRatings(data.PopularSeries)
+	enrichMediaRatings(data.Trending, scope)
+	enrichMediaRatings(data.Popular, scope)
+	enrichMediaRatings(data.PopularSeries, scope)
 
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch discover data"})
@@ -269,30 +298,35 @@ func handleDiscover(c *gin.Context) {
 	discoverCache.data = data
 	discoverCache.expiresAt = time.Now().Add(discoverCache.duration)
 
+	if payload, err := json.Marshal(data); err == nil {
+		redisSet(sharedKey, payload, discoverCache.duration)
+	}
+
 	c.JSON(http.StatusOK, data)
 }
 
-func fetchDiscoverData() (*DiscoverResponse, error) {
+func fetchDiscoverData(scopes ...*callScope) (*DiscoverResponse, error) {
 	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := firstScope(scopes)
 
 	// Fetch Trending
 	var trending TMDBResponse
 	trendingURL := "https://api.themoviedb.org/3/trending/all/day"
-	if err := tmdbGet(trendingURL, apiKey, &trending); err != nil {
+	if err := tmdbGet(trendingURL, apiKey, &trending, scope); err != nil {
 		return nil, fmt.Errorf("failed to fetch trending: %w", err)
 	}
 
 	// Fetch Popular Movies
 	var popular TMDBResponse
 	popularURL := "https://api.themoviedb.org/3/movie/popular"
-	if err := tmdbGet(popularURL, apiKey, &popular); err != nil {
+	if err := tmdbGet(popularURL, apiKey, &popular, scope); err != nil {
 		return nil, fmt.Errorf("failed to fetch popular: %w", err)
 	}
 
 	// Fetch Popular TV Series
 	var popularSeries TMDBResponse
 	popularSeriesURL := "https://api.themoviedb.org/3/tv/popular"
-	if err := tmdbGet(popularSeriesURL, apiKey, &popularSeries); err != nil {
+	if err := tmdbGet(popularSeriesURL, apiKey, &popularSeries, scope); err != nil {
 		return nil, fmt.Errorf("failed to fetch popular series: %w", err)
 	}
 

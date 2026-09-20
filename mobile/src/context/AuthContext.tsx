@@ -4,6 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import { router } from "expo-router";
 import { setApiToken, registerUnauthorizedCallback, loginUser, signupUser, type User } from "@/lib/media-api";
 import { cache } from "@/lib/cache";
+import { clearLocalUserData } from "@/lib/db/client";
 
 interface AuthContextType {
   token: string | null;
@@ -41,7 +42,9 @@ const storage = {
     if (Platform.OS === "web") {
       try {
         return localStorage.getItem(key);
-      } catch (e) {
+      } catch {
+        // Storage can be unavailable (private mode, blocked cookies); treat it
+        // as "no stored session" rather than failing the whole app start.
         return null;
       }
     } else {
@@ -53,7 +56,7 @@ const storage = {
     if (Platform.OS === "web") {
       try {
         localStorage.removeItem(key);
-      } catch (e) {
+      } catch {
         // ignore
       }
     } else {
@@ -139,6 +142,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storage.deleteItem(TOKEN_KEY);
     await storage.deleteItem(USER_KEY);
     await cache.clearAll();
+    // Drop the local-first copy too. Leaving one account's watchlist and queued
+    // mutations on the device would show them to the next account that signs in,
+    // and could replay them against the wrong user.
+    try {
+      await clearLocalUserData();
+    } catch (err) {
+      console.warn("Failed to clear local data on logout", err);
+    }
   }, []);
 
   useEffect(() => {

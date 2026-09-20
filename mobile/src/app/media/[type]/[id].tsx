@@ -1,9 +1,13 @@
 import { useAuth } from "@/context/AuthContext";
+import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { invalidateMediaCaches } from "@/lib/cache";
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
+import { getNextAirLabel } from "@/lib/schedule";
+import { setTelemetryScreen } from "@/lib/telemetry";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Heart, Lock, Play, Plus } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Calendar, Check, Clapperboard, Heart, Lock, Plus } from "lucide-react-native";
 import {
   Alert,
   Linking,
@@ -15,9 +19,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 
 import {
-  BACKDROP_IMAGE_BASE_URL,
-  IMAGE_BASE_URL,
-  PROFILE_IMAGE_BASE_URL,
   addToFavorites,
   addToWatchlist,
   fetchFavoriteStatus,
@@ -25,20 +26,23 @@ import {
   fetchSeasonEpisodes,
   fetchWatchedStatus,
   fetchWatchlist,
-  imageUrl,
   markWatched,
   markWatchedBulk,
   mediaTitle,
   removeFromFavorites,
   removeFromWatchlist,
   unmarkWatched,
+  unmarkWatchedBulk,
   type Episode,
   type MediaDetails,
   type Season,
+  type TvProgress,
 } from "@/lib/media-api";
-import RatingLogo from "@/components/Discover/RatingLogo";
 import BackButton from "@/components/BackButton";
+import HeroIconButton from "@/components/HeroIconButton";
+import LoadingOrb from "@/components/LoadingOrb";
 import MediaToggleBadge from "@/components/MediaToggleBadge";
+import WatchProgressBar from "@/components/Watchlist/WatchProgressBar";
 
 export default function MediaDetailScreen() {
   const router = useRouter();
@@ -66,9 +70,22 @@ export default function MediaDetailScreen() {
   const [watchedEpisodes, setWatchedEpisodes] = useState<Set<string>>(
     new Set(),
   );
+  /**
+   * Whole-show progress for the hero, straight from the server so the bar and
+   * the Watchlist screen cannot disagree. Null for movies, logged-out viewers,
+   * and titles whose season lookup failed.
+   */
+  const [tvProgress, setTvProgress] = useState<TvProgress | null>(null);
 
   const isMovie = params.type === "movie";
   const isTv = params.type === "tv";
+
+  // What the screen should render, rather than raw `loading`: the orb is held
+  // back for 150ms so a cached payload does not flash it for two frames, and
+  // once shown it stays for at least 500ms so it never blinks. A re-load while
+  // details are already on screen therefore keeps the content up instead of
+  // swapping in the orb.
+  const showLoadingUI = useDeferredLoading(loading);
 
   const isUnreleased = useMemo(() => {
     if (!details) return false;
@@ -119,6 +136,27 @@ export default function MediaDetailScreen() {
     return details.logos[0];
   }, [details]);
 
+  // Poster for the hero. List cards all draw `poster_path`, so an alternate
+  // variant is preferred when TMDB has one: that keeps the detail screen from
+  // repeating the exact artwork the user just tapped. Falls back to the list
+  // poster for older cached payloads and titles with no extra artwork.
+  const heroPosterPath = useMemo(() => {
+    if (!details) return null;
+    const alternate = (details.posters ?? []).find(
+      (poster) => poster.file_path && poster.file_path !== details.poster_path,
+    );
+    return alternate?.file_path || details.poster_path || null;
+  }, [details]);
+
+  /**
+   * "Next: 3 days" copy. Null whenever the date is unusable, which hides the
+   * pill rather than rendering a broken label.
+   */
+  const nextAirLabel = useMemo(
+    () => getNextAirLabel(tvProgress?.next_episode?.air_date),
+    [tvProgress],
+  );
+
   const loadAll = useCallback(async () => {
     if (!params.type || !params.id) {
       return;
@@ -131,12 +169,15 @@ export default function MediaDetailScreen() {
           await Promise.all([
             fetchMediaDetails(params.type, params.id),
             fetchWatchlist(),
-            fetchWatchedStatus(params.id, params.type),
+            fetchWatchedStatus(params.id, params.type, {
+              includeTvProgress: isTv,
+            }),
             fetchFavoriteStatus(params.id),
           ]);
         setDetails(detailsData);
         setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
         setFavorited(favoriteStatus.favorited ?? false);
+        setTvProgress(watchedStatus.tv_progress ?? null);
         if (isMovie) {
           setWatched(watchedStatus.watched ?? false);
         } else if (watchedStatus.episodes) {
@@ -153,15 +194,69 @@ export default function MediaDetailScreen() {
         setWatched(false);
         setFavorited(false);
         setWatchedEpisodes(new Set());
+        setTvProgress(null);
       }
     } catch (err: any) {
       setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
-  }, [params.type, params.id, isMovie, token]);
+  }, [params.type, params.id, isMovie, isTv, token]);
+
+  /**
+   * Re-reads watched state and hero progress after a toggle.
+   *
+   * The server owns the "caught up / next episode" verdict, so this keeps the
+   * bar and the countdown pill honest instead of re-deriving them from the
+   * local watched set. Failures are swallowed on purpose: progress is
+   * decoration, and a metadata hiccup must not surface an error over a watch
+   * action that already succeeded.
+   */
+  const statusRequestId = useRef(0);
+  const refreshWatchedStatus = useCallback(async () => {
+    if (!token || !params.id) return;
+    const requestId = ++statusRequestId.current;
+    try {
+      const status = await fetchWatchedStatus(params.id, params.type, {
+        includeTvProgress: isTv,
+      });
+      // A newer toggle already asked for fresher data; its answer wins.
+      if (requestId !== statusRequestId.current) return;
+      setTvProgress(status.tv_progress ?? null);
+      if (isMovie) {
+        setWatched(status.watched ?? false);
+      } else if (status.episodes) {
+        const next = new Set<string>();
+        for (const ep of status.episodes) {
+          next.add(`${ep.season}:${ep.episode}`);
+        }
+        setWatchedEpisodes(next);
+      }
+    } catch {
+      // Keep the last good values.
+    }
+  }, [isMovie, isTv, params.id, params.type, token]);
+
+  /**
+   * Keeps the hero's progress pills honest after a watched mutation.
+   *
+   * Un-marking is reflected locally straight away: the user is demonstrably no
+   * longer caught up, and a stale "Next: 3 days" would be a lie until the
+   * server confirms it.
+   */
+  const syncTvProgress = useCallback(
+    (removedSomething = false) => {
+      if (!isTv) return;
+      if (removedSomething) {
+        setTvProgress((prev) => (prev ? { ...prev, caught_up: false } : prev));
+      }
+      void refreshWatchedStatus();
+    },
+    [isTv, refreshWatchedStatus],
+  );
 
   useEffect(() => {
+    setTelemetryScreen("media-detail");
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll();
   }, [loadAll, token]);
@@ -322,19 +417,24 @@ export default function MediaDetailScreen() {
         );
         setWatchedEpisodes(nextWatched);
         await invalidateMediaCaches();
+        syncTvProgress();
       } else {
-        const promises = Array.from(watchedEpisodes).map((key) => {
+        // One request replaces one DELETE per watched episode. Clearing a
+        // ten-season show used to fire ~200 sequential requests, which was slow
+        // enough to look broken and hammered the backend.
+        const episodes = Array.from(watchedEpisodes).map((key) => {
           const [season, episode] = key.split(":").map(Number);
-          return unmarkWatched({
-            media_id: details.id,
-            media_type: "tv",
-            season_number: season,
-            episode_number: episode,
-          });
+          return { season, episode };
         });
-        await Promise.allSettled(promises);
+
+        await unmarkWatchedBulk({
+          media_id: details.id,
+          media_type: "tv",
+          episodes,
+        });
         setWatchedEpisodes(new Set());
         await invalidateMediaCaches();
+        syncTvProgress(true);
       }
     } catch (err: any) {
       setError(err.message || String(err));
@@ -423,6 +523,7 @@ export default function MediaDetailScreen() {
         try {
           await unmarkWatched(payload);
           await invalidateMediaCaches();
+          syncTvProgress(true);
         } catch (err: any) {
           setWatchedEpisodes((prev) => {
             const next = new Set(prev);
@@ -440,6 +541,7 @@ export default function MediaDetailScreen() {
         try {
           await markWatched(payload);
           await invalidateMediaCaches();
+          syncTvProgress();
         } catch (err: any) {
           setWatchedEpisodes((prev) => {
             const next = new Set(prev);
@@ -494,6 +596,7 @@ export default function MediaDetailScreen() {
             try {
               await markWatchedBulk(payload);
               await invalidateMediaCaches();
+              syncTvProgress();
             } catch (err: any) {
               setError(err.message || String(err));
               loadAll();
@@ -531,13 +634,8 @@ export default function MediaDetailScreen() {
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        {loading ? (
-          <YStack f={1} ai="center" jc="center" gap="$3">
-            <Spinner size="large" color="$color" />
-            <Text color="$color" opacity={0.55}>
-              Loading details...
-            </Text>
-          </YStack>
+        {showLoadingUI ? (
+          <LoadingOrb label="Loading details..." />
         ) : error ? (
           <YStack f={1} ai="center" jc="center" gap="$4" px="$4">
             <Text color="$red10" fow="700" ta="center">
@@ -550,31 +648,31 @@ export default function MediaDetailScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
           >
-            {/* Hero Backdrop */}
-            <YStack h={520} bg="#151515">
-              {details.backdrop_path ? (
+            {/* Hero Poster */}
+            <YStack h={600} bg="#151515">
+              {heroPosterPath ? (
                 <Image
-                  source={{
-                    uri: imageUrl(
-                      details.backdrop_path,
-                      BACKDROP_IMAGE_BASE_URL,
-                    ),
-                  }}
+                  source={{ uri: imageUrl(heroPosterPath, "backdrop") }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
+                  cachePolicy={imageCachePolicy("backdrop")}
+                  transition={imageTransitionMs("backdrop")}
+                  recyclingKey={heroPosterPath}
                 />
               ) : (
                 <YStack f={1} ai="center" jc="center">
                   <Text color="$color" opacity={0.5}>
-                    No backdrop available
+                    No poster available
                   </Text>
                 </YStack>
               )}
 
-              {/* Gradient overlay */}
-              <YStack style={styles.gradientOverlay} />
-
-              {/* Header row: Back + Title */}
+              {/*
+                Top controls and the status pill only. Genres, runtime and the
+                provider live below the artwork, so the hero needs no scrim
+                dimming it: the back button, the trailer button and every pill
+                here carry their own translucent surface.
+              */}
               <YStack
                 pos="absolute"
                 t={0}
@@ -584,12 +682,25 @@ export default function MediaDetailScreen() {
                 jc="space-between"
                 p="$4"
               >
-                {/* Back button */}
-                <BackButton onPress={() => router.back()} />
+                <YStack gap="$3" w="100%" ai="center">
+                  <XStack w="100%" jc="space-between" ai="center">
+                    <BackButton onPress={() => router.back()} />
 
-                {/* Bottom of hero: Status + Logo/Title + Meta + Genres */}
-                <YStack gap="$3" ai="center" w="100%">
-                  {/* Status badge */}
+                    {trailer ? (
+                      <HeroIconButton
+                        accessibilityLabel="Play trailer"
+                        onPress={openTrailer}
+                      >
+                        <Clapperboard
+                          size={19}
+                          color="#FFFFFF"
+                          strokeWidth={2.4}
+                        />
+                      </HeroIconButton>
+                    ) : null}
+                  </XStack>
+
+                  {/* Status badge: stays over the artwork in its translucent pill. */}
                   {details.status ? (
                     <XStack jc="center" ai="center">
                       <XStack
@@ -606,15 +717,19 @@ export default function MediaDetailScreen() {
                       </XStack>
                     </XStack>
                   ) : null}
+                </YStack>
+
+                {/* Bottom of hero: the progress pills, then the actions. */}
+                <YStack gap="$3" w="100%">
 
                   {/* Logo or Title */}
-                  {logo ? (
+                  {/* {logo ? (
                     <Image
-                      source={{
-                        uri: imageUrl(logo.file_path, IMAGE_BASE_URL),
-                      }}
+                      source={{ uri: imageUrl(logo.file_path, "logo") }}
                       style={styles.logoImage}
                       contentFit="contain"
+                      cachePolicy={imageCachePolicy("logo")}
+                      transition={imageTransitionMs("logo")}
                     />
                   ) : (
                     <Text
@@ -627,90 +742,22 @@ export default function MediaDetailScreen() {
                     >
                       {mediaTitle(details)}
                     </Text>
-                  )}
+                  )} */}
 
-                  {(details.imdb_rating != null ||
-                    details.metascore != null ||
-                    details.rotten_tomatoes != null) && (
-                    <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" mt="$2">
-                      {details.imdb_rating != null && (
-                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
-                          <RatingLogo type="imdb" size={18} />
-                          <Text color="white" fow="800" fos="$2">{details.imdb_rating.toFixed(1)}</Text>
-                        </XStack>
-                      )}
-                      {details.metascore != null && (
-                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
-                          <RatingLogo type="metascore" size={18} />
-                          <Text color="white" fow="800" fos="$2">{details.metascore}</Text>
-                        </XStack>
-                      )}
-                      {details.rotten_tomatoes != null && (
-                        <XStack ai="center" gap="$1" bg="rgba(0,0,0,0.72)" px="$2" py="$1" borderRadius="$2">
-                          <RatingLogo type="rotten-tomatoes" size={18} />
-                          <Text color="white" fow="800" fos="$2">{details.rotten_tomatoes}%</Text>
-                        </XStack>
-                      )}
-                    </XStack>
-                  )}
+                  {/*
+                    The watch bar as a plain line on the artwork: a caption row
+                    ("Watched" / "3 of 8"), then the bar itself. No pill, no
+                    percentage — the count carries more information and the
+                    translucent pill only competed with the action row.
 
-                  {/* Genre bullets + runtime/date */}
-                  <XStack
-                    ai="center"
-                    jc="center"
-                    gap="$2"
-                    flexWrap="wrap"
-                    w="100%"
-                  >
-                    {(details.genres ?? []).map((genre, i) => (
-                      <XStack key={genre.id} ai="center" gap="$2">
-                        {i > 0 && (
-                          <YStack
-                            w={3}
-                            h={3}
-                            borderRadius={999}
-                            bg="rgba(255,255,255,0.5)"
-                          />
-                        )}
-                        <Text color="white" opacity={0.85} fow="500" fos="$3">
-                          {genre.name}
-                        </Text>
-                      </XStack>
-                    ))}
-                    {runtime ? (
-                      <XStack ai="center" gap="$2">
-                        {(details.genres ?? []).length > 0 && (
-                          <YStack
-                            w={3}
-                            h={3}
-                            borderRadius={999}
-                            bg="rgba(255,255,255,0.5)"
-                          />
-                        )}
-                        <Text color="white" opacity={0.7} fow="500" fos="$3">
-                          {runtime}
-                        </Text>
-                      </XStack>
-                    ) : null}
-                    {isTv && details.network ? (
-                      <XStack ai="center" gap="$2">
-                        {((details.genres ?? []).length > 0 || runtime) && (
-                          <YStack
-                            w={3}
-                            h={3}
-                            borderRadius={999}
-                            bg="rgba(255,255,255,0.5)"
-                          />
-                        )}
-                        <Text color="white" opacity={0.85} fow="500" fos="$3">
-                          {details.network}
-                        </Text>
-                      </XStack>
-                    ) : null}
-                  </XStack>
+                    The bar is still the Watchlist component so the two screens
+                    cannot drift apart; it is the fill and track colours that
+                    are overridden here, because the watchlist's tier colours
+                    and page-background track are tuned for a card.
+                  */}
+                  
 
-                  {/* Action Buttons in Banner */}
-                  <XStack gap="$2" ai="center" jc="center" mt="$2" w="100%">
+                  <XStack gap="$2" ai="center" jc="center" w="100%">
                     <Button
                       f={1}
                       size="$4"
@@ -755,24 +802,6 @@ export default function MediaDetailScreen() {
                       {watchlistAction.label}
                     </Button>
 
-                    {trailer ? (
-                      <Button
-                        size="$4"
-                        borderRadius="$10"
-                        bg="rgba(20,20,24,0.55)"
-                        color="white"
-                        borderWidth={1}
-                        borderColor="rgba(255,255,255,0.28)"
-                        style={styles.actionButtonShadow}
-                        onPress={openTrailer}
-                        icon={<Play size={16} color="#FFFFFF" fill="#FFFFFF" />}
-                        px="$3"
-                        h={46}
-                      >
-                        Trailer
-                      </Button>
-                    ) : null}
-
                     <Button
                       size="$4"
                       borderRadius="$10"
@@ -811,9 +840,143 @@ export default function MediaDetailScreen() {
                       )}
                     </Button>
                   </XStack>
+
+                  
+{isTv &&
+                  tvProgress &&
+                  tvProgress.total_episodes > 0 &&
+                  tvProgress.released ? (
+                    <YStack w="100%">
+                      <XStack
+                        w="100%"
+                        jc="space-between"
+                        ai="center"
+                        mb="$1.5"
+                      >
+                        <Text
+                          color="white"
+                          opacity={0.85}
+                          fow="600"
+                          fos="$2"
+                          style={styles.heroLabel}
+                        >
+                          Watched
+                        </Text>
+                        <Text
+                          color="white"
+                          opacity={0.85}
+                          fow="600"
+                          fos="$2"
+                          style={styles.heroLabel}
+                        >
+                          {tvProgress.watched_episodes} of{" "}
+                          {tvProgress.total_episodes}
+                        </Text>
+                      </XStack>
+
+                      <WatchProgressBar
+                        progress={tvProgress.progress}
+                        showLabel={false}
+                        trackColor="rgba(255,255,255,0.28)"
+                        barColor="#FFFFFF"
+                      />
+                    </YStack>
+                  ) : null}
+
+                  {/*
+                    Countdown to the next episode, centred under the action row.
+
+                    Server-gated: `caught_up` means nothing that has already
+                    aired is unwatched, and `next_episode` carries the air date,
+                    so the client only formats it.
+                  */}
+                  {tvProgress?.caught_up && nextAirLabel ? (
+                    <XStack ai="center" jc="center" gap="$1.5" mt="$1">
+                      <Calendar
+                        size={14}
+                        color="rgba(255,255,255,0.85)"
+                        strokeWidth={2.4}
+                      />
+                      <Text
+                        color="white"
+                        opacity={0.9}
+                        fow="600"
+                        fos="$2"
+                        numberOfLines={1}
+                        style={styles.heroLabel}
+                      >
+                        Next: {nextAirLabel}
+                      </Text>
+                    </XStack>
+                  ) : null}
                 </YStack>
               </YStack>
             </YStack>
+
+            {/*
+              Genres, runtime and provider, on the page background rather than
+              over the artwork. One wrapping row; the text follows the theme
+              colour because the hardcoded white it used over the backdrop would
+              be invisible on a light page.
+
+              Ratings are deliberately absent here: the cards the user arrived
+              from (Discover, search, watchlist) already carry them, so showing
+              them again on the detail page was noise.
+            */}
+            {(details.genres ?? []).length > 0 ||
+            runtime ||
+            (isTv && details.network) ? (
+              <XStack ai="center" gap="$2" flexWrap="wrap" mt="$4" mx="$4">
+                {(details.genres ?? []).map((genre, i) => (
+                  <XStack key={genre.id} ai="center" gap="$2">
+                    {i > 0 && (
+                      <YStack
+                        w={3}
+                        h={3}
+                        borderRadius={999}
+                        bg="$color"
+                        opacity={0.35}
+                      />
+                    )}
+                    <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                      {genre.name}
+                    </Text>
+                  </XStack>
+                ))}
+                {runtime ? (
+                  <XStack ai="center" gap="$2">
+                    {(details.genres ?? []).length > 0 && (
+                      <YStack
+                        w={3}
+                        h={3}
+                        borderRadius={999}
+                        bg="$color"
+                        opacity={0.35}
+                      />
+                    )}
+                    <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                      {runtime}
+                    </Text>
+                  </XStack>
+                ) : null}
+                {isTv && details.network ? (
+                  <XStack ai="center" gap="$2">
+                    {((details.genres ?? []).length > 0 || runtime) && (
+                      <YStack
+                        w={3}
+                        h={3}
+                        borderRadius={999}
+                        bg="$color"
+                        opacity={0.35}
+                      />
+                    )}
+                    <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                      {details.network}
+                    </Text>
+                  </XStack>
+                ) : null}
+              </XStack>
+            ) : null}
 
             {/* TV Tab Switcher */}
             {isTv && (
@@ -932,14 +1095,12 @@ export default function MediaDetailScreen() {
                             >
                               {member.profile_path ? (
                                 <Image
-                                  source={{
-                                    uri: imageUrl(
-                                      member.profile_path,
-                                      PROFILE_IMAGE_BASE_URL,
-                                    ),
-                                  }}
+                                  source={{ uri: imageUrl(member.profile_path, "profile") }}
                                   style={{ width: "100%", height: "100%" }}
                                   contentFit="cover"
+                                  cachePolicy={imageCachePolicy("profile")}
+                                  transition={imageTransitionMs("profile")}
+                                  recyclingKey={member.profile_path}
                                 />
                               ) : (
                                 <YStack f={1} ai="center" jc="center">
@@ -991,6 +1152,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.45,
     shadowRadius: 8,
     elevation: 6,
+  },
+  // The watch bar's caption and the countdown sit directly on the artwork with
+  // no pill behind them, so they get the same shadow treatment as hero copy.
+  heroLabel: {
+    textShadowColor: "rgba(0,0,0,0.85)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
   episodeThumb: {
     shadowColor: "#000000",
@@ -1171,30 +1339,30 @@ function EpisodeRowListItem({
           >
           {episode.still_path ? (
             <Image
-              source={{
-                uri: imageUrl(episode.still_path, BACKDROP_IMAGE_BASE_URL),
-              }}
+              source={{ uri: imageUrl(episode.still_path, "still") }}
               style={{ width: "100%", height: "100%" }}
               contentFit="cover"
+              cachePolicy={imageCachePolicy("still")}
+              transition={imageTransitionMs("still")}
+              recyclingKey={episode.still_path}
             />
           ) : showDetails.backdrop_path ? (
             <Image
-              source={{
-                uri: imageUrl(
-                  showDetails.backdrop_path,
-                  BACKDROP_IMAGE_BASE_URL,
-                ),
-              }}
+              source={{ uri: imageUrl(showDetails.backdrop_path, "still") }}
               style={{ width: "100%", height: "100%" }}
               contentFit="cover"
+              cachePolicy={imageCachePolicy("still")}
+              transition={imageTransitionMs("still")}
+              recyclingKey={showDetails.backdrop_path}
             />
           ) : showDetails.poster_path ? (
             <Image
-              source={{
-                uri: imageUrl(showDetails.poster_path, IMAGE_BASE_URL),
-              }}
+              source={{ uri: imageUrl(showDetails.poster_path, "posterCell") }}
               style={{ width: "100%", height: "100%" }}
               contentFit="cover"
+              cachePolicy={imageCachePolicy("posterCell")}
+              transition={imageTransitionMs("posterCell")}
+              recyclingKey={showDetails.poster_path}
             />
           ) : (
             <YStack f={1} ai="center" jc="center">

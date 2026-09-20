@@ -4,7 +4,8 @@ import { Text, YStack } from "tamagui";
 
 import WatchProgressBadge from "./WatchProgressBadge";
 
-import { imageUrl, type TMDBMedia } from "@/lib/media-api";
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
+import { type TMDBMedia } from "@/lib/media-api";
 
 interface WatchlistPosterCardProps {
   item: TMDBMedia;
@@ -43,9 +44,12 @@ export default function WatchlistPosterCard({
       >
         {item.poster_path ? (
           <Image
-            source={{ uri: imageUrl(item.poster_path) }}
+            source={{ uri: imageUrl(item.poster_path, "posterCard") }}
             style={{ width: "100%", height: "100%" }}
             contentFit="cover"
+            cachePolicy={imageCachePolicy("posterCard")}
+            transition={imageTransitionMs("posterCard")}
+            recyclingKey={item.poster_path}
           />
         ) : (
           <YStack f={1} ai="center" jc="center" px="$3">

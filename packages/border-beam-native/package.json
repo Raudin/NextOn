@@ -1,0 +1,33 @@
+{
+  "name": "border-beam-native",
+  "version": "0.1.0",
+  "description": "Animated border beam effect for React Native (Skia) \u2014 port of border-beam",
+  "main": "./src/index.ts",
+  "react-native": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "peerDependencies": {
+    "@shopify/react-native-skia": ">=1.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.72.0",
+    "react-native-reanimated": ">=3.0.0"
+  },
+  "keywords": [
+    "react-native",
+    "skia",
+    "animation",
+    "border",
+    "beam",
+    "glow"
+  ],
+  "author": "Jakub Antalik",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jakubantalik/Libraries.dev.git",
+    "directory": "packages/border-beam/ports/react-native/border-beam-native"
+  }
+}

@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { Pencil, Settings } from "lucide-react-native";
 import { Avatar, Button, Input, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { type User, type ProfileStats } from "@/lib/media-api";
+import { imageCachePolicy, imageTransitionMs } from "@/lib/images";
 import { useTheme } from "@/hooks/use-theme";
 
 const AVATAR_PRESETS = [
@@ -88,7 +89,16 @@ export default function ProfileHeader({
             borderColor="$borderColor"
           >
             {profileUser.avatar_url ? (
-              <Image source={{ uri: profileUser.avatar_url }} style={styles.avatarImage} contentFit="cover" />
+              <Image
+                source={{ uri: profileUser.avatar_url }}
+                style={styles.avatarImage}
+                contentFit="cover"
+                // Avatars are remote and revisited on every profile visit, so
+                // they are worth keeping on disk.
+                cachePolicy={imageCachePolicy("profile")}
+                transition={imageTransitionMs("profile")}
+                recyclingKey={profileUser.avatar_url}
+              />
             ) : (
               <Avatar.Fallback bc="$purple9" jc="center" ai="center">
                 <Text color="white" fow="700" fos="$5">{profileUser.email.substring(0, 2).toUpperCase()}</Text>
@@ -175,7 +185,13 @@ export default function ProfileHeader({
                     p={2}
                     pressStyle={{ opacity: 0.8 }}
                   >
-                    <Image source={{ uri: preset }} style={styles.presetImage} />
+                    <Image
+                      source={{ uri: preset }}
+                      style={styles.presetImage}
+                      cachePolicy={imageCachePolicy("profile")}
+                      transition={imageTransitionMs("profile")}
+                      recyclingKey={preset}
+                    />
                   </YStack>
                 );
               })}

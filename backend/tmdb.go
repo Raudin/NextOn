@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -113,16 +115,34 @@ func (c *tmdbResponseCache) set(key string, data []byte) {
 // getOrFetch returns the cached body for key or performs a single network
 // fetch when missing/expired. Concurrent callers for the same key share the
 // same in-flight fetch instead of each hitting TMDB.
-func (c *tmdbResponseCache) getOrFetch(key string, fetch func() ([]byte, error)) ([]byte, error) {
+//
+// The second return value reports whether *this* call actually performed the
+// outbound request. Callers that need to attribute fan-out to a request must
+// only count a real fetch: a cache hit and a coalesced wait are both free, and
+// counting them would overstate the backend's outbound load.
+func (c *tmdbResponseCache) getOrFetch(key string, fetch func() ([]byte, error)) ([]byte, bool, error) {
 	if data, ok := c.get(key); ok {
-		return data, nil
+		metrics.recordTMDB(true)
+		return data, false, nil
+	}
+
+	// Second tier. Redis survives deploys and is shared between replicas, so a
+	// cold in-process cache after a restart does not mean re-fetching every
+	// title from TMDB. A miss and an outage are the same thing here.
+	sharedKey := redisKey("tmdb", key)
+	if data, ok := redisGet(sharedKey); ok {
+		metrics.recordTMDB(true)
+		c.set(key, data)
+		return data, false, nil
 	}
 
 	c.mu.Lock()
 	if call, ok := c.inflight[key]; ok {
 		c.mu.Unlock()
 		<-call.done
-		return call.data, call.err
+		// Another caller already performed this fetch; we just read its result.
+		metrics.recordTMDB(true)
+		return call.data, false, call.err
 	}
 	call := &inflightCall{done: make(chan struct{})}
 	c.inflight[key] = call
@@ -137,15 +157,29 @@ func (c *tmdbResponseCache) getOrFetch(key string, fetch func() ([]byte, error))
 
 	if call.err == nil {
 		c.set(key, call.data)
+		redisSet(sharedKey, call.data, tmdbCacheTTL)
 	}
-	return call.data, call.err
+	metrics.recordTMDB(false)
+	return call.data, true, call.err
 }
 
-func tmdbGet(baseURL, apiKey string, target interface{}) error {
-	return tmdbGetWithParams(baseURL, apiKey, nil, target)
+// firstScope picks the request scope out of an optional variadic argument.
+// TMDB helpers accept `scopes ...*callScope` so existing call sites keep
+// compiling unchanged while request-path callers can record fan-out.
+func firstScope(scopes []*callScope) *callScope {
+	for _, s := range scopes {
+		if s != nil {
+			return s
+		}
+	}
+	return nil
 }
 
-func tmdbGetWithParams(baseURL, apiKey string, params map[string]string, target interface{}) error {
+func tmdbGet(baseURL, apiKey string, target interface{}, scopes ...*callScope) error {
+	return tmdbGetWithParams(baseURL, apiKey, nil, target, scopes...)
+}
+
+func tmdbGetWithParams(baseURL, apiKey string, params map[string]string, target interface{}, scopes ...*callScope) error {
 	req, err := http.NewRequest("GET", baseURL, nil)
 	if err != nil {
 		return err
@@ -170,7 +204,11 @@ func tmdbGetWithParams(baseURL, apiKey string, params map[string]string, target 
 	// process lifetime, so the URL alone is a safe key.
 	cacheKey := req.URL.String()
 
-	data, err := tmdbCache.getOrFetch(cacheKey, func() ([]byte, error) {
+	data, fetched, err := tmdbCache.getOrFetch(cacheKey, func() ([]byte, error) {
+		// Smooth bursts before opening the connection. A refusal here is
+		// non-fatal by design: see tokenBucket.take.
+		tmdbLimiter.take(context.Background(), outboundWaitMax)
+
 		resp, err := tmdbHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -183,6 +221,9 @@ func tmdbGetWithParams(baseURL, apiKey string, params map[string]string, target 
 
 		return io.ReadAll(resp.Body)
 	})
+	if fetched {
+		firstScope(scopes).addTMDB()
+	}
 	if err != nil {
 		return err
 	}
@@ -226,4 +267,37 @@ func topCast(cast []CastMember, limit int) []CastMember {
 		}
 	}
 	return safe
+}
+
+// topPosters returns up to limit poster variants for the detail hero, ranked by
+// community score and limited to English/neutral artwork.
+//
+// TMDB already returns `images.posters` ordered by score, but the ranking is
+// explicit here so that dropping the non-English entries cannot silently
+// reshuffle the result.
+func topPosters(posters []Image, limit int) []Image {
+	candidates := make([]Image, 0, len(posters))
+	for _, poster := range posters {
+		if poster.FilePath == "" {
+			continue
+		}
+		// The details request asks for `include_image_language=en,null`, so a
+		// different code is artwork TMDB could not filter out.
+		if poster.Iso6391 != "" && poster.Iso6391 != "en" {
+			continue
+		}
+		candidates = append(candidates, poster)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].VoteAverage > candidates[j].VoteAverage
+	})
+
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates
 }
