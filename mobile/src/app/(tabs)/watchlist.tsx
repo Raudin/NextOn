@@ -1,3 +1,4 @@
+import { FlashList } from "@shopify/flash-list";
 import { useAuth } from "@/context/AuthContext";
 import { useFocusEffect, useRouter } from "expo-router";
 import {
@@ -7,10 +8,13 @@ import {
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Pressable, useWindowDimensions } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, useTheme, XStack, YStack } from "tamagui";
+import { Button, Spinner, Text, useTheme, useThemeName, XStack, YStack } from "tamagui";
+import { useDeferredLoading } from "@/hooks/use-deferred-loading";
+import { useTypingActivity } from "@/hooks/use-typing-activity";
 
+import LoadingOrb from "@/components/LoadingOrb";
 import SearchField from "@/components/SearchField";
 import WatchlistMenu, {
   type WatchlistLayoutMode,
@@ -25,43 +29,43 @@ import WatchlistStatusFilter, {
 import WatchlistTabs, {
   type WatchlistTab,
 } from "@/components/Watchlist/WatchlistTabs";
-import { cache } from "@/lib/cache";
+import { invalidateMediaCaches } from "@/lib/cache";
+import { setTelemetryScreen } from "@/lib/telemetry";
+import { usePendingOverlay } from "@/hooks/use-pending-overlay";
+import { BorderBeam } from 'border-beam-native';
 
+import { loadWatchlistWithFallback } from "@/lib/db/queries";
 import {
-  fetchMediaDetails,
-  fetchWatchedStatus,
-  fetchWatchlist,
   mediaTitle,
   releaseYear,
-  type TMDBMedia,
+  type WatchlistEntry,
 } from "@/lib/media-api";
 
-// Revalidation throttle: re-fetching the full watchlist on every screen focus
-// (which triggers expensive server-side "fully watched" filtering) hammered the
-// backend. Within this window the cached list is shown as-is and the network
-// revalidation is skipped.
-const WATCHLIST_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
-let lastWatchlistFetchAt = 0;
+/**
+ * Posters per row in the grid layout. Rows are pre-chunked for FlashList (see
+ * `listData`), so this is also the item-grouping size.
+ */
+const POSTER_COLUMNS = 3;
 
-// Versioned so entries cached before ShowProgress gained `caughtUp` are ignored
-// instead of silently classifying everything as "not caught up".
-const SHOW_PROGRESS_CACHE_KEY = "watchlist_show_progress_v2";
+/**
+ * One entry in the flattened FlashList model.
+ *
+ * `getItemType` keys off `type` so a recycled cell is never reused across a
+ * section header, a poster row and a list row -- reusing a cell across
+ * different shapes is how recycled lists end up showing the wrong artwork.
+ */
+type WatchlistListItem =
+  | { type: "section"; key: string; title: string; count: number; muted?: boolean }
+  | { type: "posters"; key: string; items: WatchlistEntry[] }
+  | { type: "entryRow"; key: string; item: WatchlistEntry }
+  | { type: "empty"; key: string; message: string };
 
-interface ShowProgress {
-  watchedEpisodes: number;
-  totalEpisodes: number;
-  progress: number;
-  /** Whether the show has started airing. */
-  released: boolean;
-  /**
-   * Every episode watched while the show is still returning. The backend drops
-   * fully watched shows that have ended, so these stay on the watchlist only
-   * because more episodes are coming.
-   */
-  caughtUp: boolean;
-}
-
-const ENDED_STATUSES = ["ended", "canceled", "cancelled"];
+/**
+ * Progress now arrives with the watchlist itself (`include=progress`), so both
+ * the old `watchlist_show_progress_v2` cache key and the 5-minute revalidation
+ * throttle are gone. Freshness and conditional revalidation are owned by
+ * `requestJsonCached`, and the server answers an unchanged list with a 304.
+ */
 
 function isFutureDate(value?: string | null) {
   if (!value) return false;
@@ -82,19 +86,35 @@ export default function WatchlistScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { token, isLoading: authLoading } = useAuth();
-  const [items, setItems] = useState<TMDBMedia[]>([]);
+  // The app's effective appearance, for the effect ports: they default to
+  // `theme="dark"`, and this app can pin either one independently of the OS.
+  const isLight = useThemeName() === "light";
+  const { typing, markTyping, stopTyping } = useTypingActivity();
+  const [items, setItems] = useState<WatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WatchlistTab>("tv");
   const [searchQuery, setSearchQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [layoutMode, setLayoutMode] = useState<WatchlistLayoutMode>("posters");
   const [sortMode, setSortMode] = useState<WatchlistSortMode>("recent");
   const [statusFilter, setStatusFilter] = useState<WatchlistStatus | null>(null);
-  const [showProgress, setShowProgress] = useState<
-    Record<number, ShowProgress>
-  >({});
+  /** True when the list came from the on-device mirror rather than the server. */
+  const [showingLocalMirror, setShowingLocalMirror] = useState(false);
+
+  const pendingOverlay = usePendingOverlay();
+
+  /**
+   * What the screen renders instead of raw `loading`/`authLoading`.
+   *
+   * Both flags are deferred — held back for 150ms, then held for at least
+   * 500ms once shown — so an orb only ever appears for a load long enough to
+   * warrant one, and never blinks.
+   */
+  const showAuthLoading = useDeferredLoading(authLoading);
+  const showLoadingUI = useDeferredLoading(loading);
 
   useEffect(() => {
     if (!authLoading && !token) {
@@ -102,61 +122,61 @@ export default function WatchlistScreen() {
     }
   }, [authLoading, router, token]);
 
-  const loadWatchlist = useCallback(async (forceRefresh = false) => {
-    if (!token) return;
-    setError(null);
+  /**
+   * Loads the watchlist with progress included.
+   *
+   * One request. Previously this screen fetched the list and then issued two
+   * more requests per TV show (watched status + media details) to derive
+   * progress on the device -- and re-ran that whole batch whenever the list
+   * identity changed, which happens twice on a cold start.
+   *
+   * Falls back to the local mirror when there is no cached payload and no
+   * connection, so a cold start offline shows the watchlist rather than an
+   * error. `source` is reported so the UI can be honest about it.
+   */
+  const loadWatchlist = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!token) return;
 
-    const cachedItems = await cache.get<TMDBMedia[]>("watchlist_items");
-    const cachedProgress =
-      await cache.get<Record<number, ShowProgress>>(SHOW_PROGRESS_CACHE_KEY);
-
-    if (cachedItems) {
-      setItems(cachedItems);
-      if (cachedProgress) {
-        setShowProgress(cachedProgress);
-      }
-      setLoading(false);
-
-      const isStale =
-        Date.now() - lastWatchlistFetchAt >= WATCHLIST_REVALIDATE_INTERVAL_MS;
-      if (!forceRefresh && !isStale) {
-        // Cache is fresh: skip the network revalidation entirely.
-        setBackgroundRefreshing(false);
-        return;
-      }
-      setBackgroundRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-
-    try {
-      const fetchedItems = await fetchWatchlist({ filterWatched: true });
-      await cache.set("watchlist_items", fetchedItems);
-      lastWatchlistFetchAt = Date.now();
-      setItems(fetchedItems);
-      setError(null);
-    } catch (err: any) {
-      if (!cachedItems) {
-        setError(err.message || String(err));
+      const silent = options?.silent ?? false;
+      if (silent) {
+        setBackgroundRefreshing(true);
       } else {
-        console.warn("Silent watchlist background revalidation failed:", err);
+        setLoading(true);
       }
-    } finally {
-      setLoading(false);
-      setBackgroundRefreshing(false);
-    }
-  }, [token]);
+      setError(null);
+
+      try {
+        const { items: fetchedItems, source } = await loadWatchlistWithFallback();
+        setItems(fetchedItems);
+        setShowingLocalMirror(source === "local");
+      } catch (err: any) {
+        setError(err.message || String(err));
+      } finally {
+        setLoading(false);
+        setBackgroundRefreshing(false);
+      }
+    },
+    [token],
+  );
+
+  /** Retry after a failure: clear the cache so the request actually goes out. */
+  const handleRetry = useCallback(async () => {
+    await invalidateMediaCaches();
+    await loadWatchlist();
+  }, [loadWatchlist]);
 
   useFocusEffect(
     useCallback(() => {
+      setTelemetryScreen("watchlist");
       if (token) {
-        loadWatchlist(false);
+        loadWatchlist();
       }
     }, [loadWatchlist, token]),
   );
 
   const openDetails = useCallback(
-    (item: TMDBMedia) => {
+    (item: WatchlistEntry) => {
       const type = item.media_type || (item.title ? "movie" : "tv");
       router.push({
         pathname: "/media/[type]/[id]",
@@ -166,96 +186,51 @@ export default function WatchlistScreen() {
     [router],
   );
 
+  /**
+   * The server's watchlist with offline mutations layered on top.
+   *
+   * A mutation made offline is queued and reflected in this screen's state, but
+   * the cached payload still describes the world before it — so without this a
+   * removal reappears after a restart while still offline, and a title added
+   * offline disappears entirely (the server has never seen it, so no cached
+   * payload can contain it).
+   */
+  const visibleSourceItems = useMemo<WatchlistEntry[]>(() => {
+    const remaining = items.filter(
+      (item) => !pendingOverlay.watchlistRemovedIds.has(item.id),
+    );
+
+    if (pendingOverlay.watchlistAdded.size === 0) {
+      return remaining;
+    }
+
+    // Offline additions have no server progress yet, and must not duplicate a
+    // row the payload already has (the queue is not drained yet, so both can be
+    // true at once).
+    const serverIds = new Set(remaining.map((item) => item.id));
+    const additions: WatchlistEntry[] = [];
+    for (const [id, media] of pendingOverlay.watchlistAdded) {
+      if (!serverIds.has(id)) {
+        additions.push(media as WatchlistEntry);
+      }
+    }
+
+    return [...additions, ...remaining];
+  }, [items, pendingOverlay.watchlistAdded, pendingOverlay.watchlistRemovedIds]);
+
   const movies = useMemo(
-    () => items.filter((item) => (item.media_type || "movie") === "movie"),
-    [items],
+    () => visibleSourceItems.filter((item) => (item.media_type || "movie") === "movie"),
+    [visibleSourceItems],
   );
   const shows = useMemo(
-    () => items.filter((item) => item.media_type === "tv"),
-    [items],
+    () => visibleSourceItems.filter((item) => item.media_type === "tv"),
+    [visibleSourceItems],
   );
   const gridGap = 16;
   const posterWidth = Math.max(
     96,
     Math.min(180, Math.floor((width - 32 - gridGap * 2) / 3)),
   );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadShowProgress = async () => {
-      if (shows.length === 0) {
-        setShowProgress({});
-        return;
-      }
-
-      const entries = await Promise.allSettled(
-        shows.map(async (show) => {
-          const [watchedStatus, details] = await Promise.all([
-            fetchWatchedStatus(show.id, "tv"),
-            fetchMediaDetails("tv", show.id),
-          ]);
-
-          const watchedEpisodes = watchedStatus.episodes?.length || 0;
-          const totalEpisodes = (details.seasons || [])
-            .filter((season) => season.season_number >= 1)
-            .reduce((sum, season) => sum + season.episode_count, 0);
-
-          const progress =
-            totalEpisodes > 0 ? watchedEpisodes / totalEpisodes : 0;
-
-          // A show counts as watchable once it has started airing; TMDB's
-          // status catches the ones with a stale or missing air date.
-          const normalizedStatus = details.status?.toLowerCase() ?? "";
-          const notYetReleased =
-            isFutureDate(details.first_air_date || show.first_air_date) ||
-            normalizedStatus.includes("planned") ||
-            normalizedStatus.includes("in production") ||
-            normalizedStatus.includes("rumored");
-
-          // "Caught up" = the whole show watched but still returning. Unknown
-          // statuses count as returning so a details hiccup does not hide these.
-          const fullyWatched =
-            totalEpisodes > 0 && watchedEpisodes >= totalEpisodes;
-          const hasEnded = ENDED_STATUSES.some((status) =>
-            normalizedStatus.includes(status),
-          );
-
-          return [
-            show.id,
-            {
-              watchedEpisodes,
-              totalEpisodes,
-              progress,
-              released: !notYetReleased,
-              caughtUp: !notYetReleased && fullyWatched && !hasEnded,
-            },
-          ] as const;
-        }),
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      const nextProgress: Record<number, ShowProgress> = {};
-      for (const entry of entries) {
-        if (entry.status === "fulfilled") {
-          const [id, value] = entry.value;
-          nextProgress[id] = value;
-        }
-      }
-
-      await cache.set(SHOW_PROGRESS_CACHE_KEY, nextProgress);
-      setShowProgress(nextProgress);
-    };
-
-    loadShowProgress();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [shows]);
 
   const filteredItems = useMemo(() => {
     const baseItems = activeTab === "movies" ? movies : shows;
@@ -291,22 +266,19 @@ export default function WatchlistScreen() {
   }, [activeTab, movies, searchQuery, shows, sortMode]);
 
   /** Watching status of a single item, used by the filter pills. */
-  const statusOf = useCallback(
-    (item: TMDBMedia): WatchlistStatus => {
-      if (item.media_type !== "tv") {
-        // Movies carry no per-episode data: a future release date is the only
-        // "not watchable yet" signal, matching the Home screen schedule.
-        return isFutureDate(item.release_date) ? "upcoming" : "available";
-      }
+  const statusOf = useCallback((item: WatchlistEntry): WatchlistStatus => {
+    if (item.media_type !== "tv") {
+      // Movies carry no per-episode data: a future release date is the only
+      // "not watchable yet" signal, matching the Home screen schedule.
+      return isFutureDate(item.release_date) ? "upcoming" : "available";
+    }
 
-      const progress = showProgress[item.id];
-      if (progress?.released === false) {
-        return "upcoming";
-      }
-      return progress?.caughtUp ? "caughtUp" : "available";
-    },
-    [showProgress],
-  );
+    // Progress is computed server-side; the client only reads it.
+    if (item.progress?.released === false) {
+      return "upcoming";
+    }
+    return item.progress?.caught_up ? "caughtUp" : "available";
+  }, []);
 
   const statusCounts = useMemo(() => {
     const counts: Record<WatchlistStatus, number> = {
@@ -331,86 +303,41 @@ export default function WatchlistScreen() {
 
   /** Shows are split into what can be watched now and what is still pending. */
   const availableItems = useMemo(
-    () => visibleItems.filter((item) => showProgress[item.id]?.released !== false),
-    [visibleItems, showProgress],
+    () => visibleItems.filter((item) => item.progress?.released !== false),
+    [visibleItems],
   );
   const unreleasedItems = useMemo(
-    () => visibleItems.filter((item) => showProgress[item.id]?.released === false),
-    [visibleItems, showProgress],
+    () => visibleItems.filter((item) => item.progress?.released === false),
+    [visibleItems],
   );
 
   const handleItemPress = useCallback(
-    (item: TMDBMedia) => {
+    (item: WatchlistEntry) => {
       openDetails(item);
     },
     [openDetails],
   );
 
   const subtitleFor = useCallback(
-    (item: TMDBMedia, long: boolean) => {
+    (item: WatchlistEntry, long: boolean) => {
       if (item.media_type !== "tv") {
         return releaseYear(item) || (long ? "Saved movie" : "Movie");
       }
-      const progress = showProgress[item.id];
-      if (progress?.totalEpisodes) {
+      const progress = item.progress;
+      if (progress?.total_episodes) {
         return long
-          ? `${progress.watchedEpisodes}/${progress.totalEpisodes} episodes watched`
-          : `${progress.watchedEpisodes}/${progress.totalEpisodes} episodes`;
+          ? `${progress.watched_episodes}/${progress.total_episodes} episodes watched`
+          : `${progress.watched_episodes}/${progress.total_episodes} episodes`;
       }
       return long ? "Tracking watch progress" : "Tracking progress";
     },
-    [showProgress],
+    [],
   );
 
   const progressFor = useCallback(
-    (item: TMDBMedia) =>
-      item.media_type === "tv" ? showProgress[item.id]?.progress : undefined,
-    [showProgress],
-  );
-
-  const renderGrid = useCallback(
-    (list: TMDBMedia[]) => (
-      <XStack flexWrap="wrap" gap="$3">
-        {list.map((item) => (
-          <WatchlistPosterCard
-            key={`${item.media_type || "media"}-${item.id}`}
-            item={item}
-            width={posterWidth}
-            subtitle={subtitleFor(item, false)}
-            progress={progressFor(item)}
-            selected={false}
-            selectionMode={false}
-            onPress={() => handleItemPress(item)}
-          />
-        ))}
-      </XStack>
-    ),
-    [handleItemPress, posterWidth, progressFor, subtitleFor],
-  );
-
-  const renderRows = useCallback(
-    (list: TMDBMedia[]) => (
-      <YStack gap="$3">
-        {list.map((item) => (
-          <WatchlistRow
-            key={`${item.media_type || "media"}-${item.id}`}
-            item={item}
-            subtitle={subtitleFor(item, true)}
-            progress={progressFor(item)}
-            selected={false}
-            selectionMode={false}
-            onOpen={() => handleItemPress(item)}
-          />
-        ))}
-      </YStack>
-    ),
-    [handleItemPress, progressFor, subtitleFor],
-  );
-
-  const renderList = useCallback(
-    (list: TMDBMedia[]) =>
-      layoutMode === "posters" ? renderGrid(list) : renderRows(list),
-    [layoutMode, renderGrid, renderRows],
+    (item: WatchlistEntry) =>
+      item.media_type === "tv" ? item.progress?.progress : undefined,
+    [],
   );
 
   const activeStatusFilter = statusFilter ? STATUS_FILTER_META[statusFilter] : null;
@@ -435,10 +362,170 @@ export default function WatchlistScreen() {
 
   const menuIsCustomized = layoutMode !== "posters" || sortMode !== "recent";
 
-  if (authLoading) {
+  /**
+   * Flattened list model for FlashList.
+   *
+   * A watchlist has no upper bound -- a heavy user can accumulate hundreds of
+   * titles -- and the previous `ScrollView` wrapped everything in `<YStack
+   * gap>` children, which meant every card mounted and started downloading its
+   * poster on first paint. FlashList recycles cells, so only what is near the
+   * viewport costs anything.
+   *
+   * Poster mode emits *rows* of `POSTER_COLUMNS` cards rather than relying on
+   * `numColumns`/`masonry`: our rows are mixed with section headers, and
+   * FlashList's column modes assume a single uniform item. Chunking keeps the
+   * existing wrap layout byte-for-byte identical.
+   */
+  const listData = useMemo<WatchlistListItem[]>(() => {
+    const out: WatchlistListItem[] = [];
+
+    if (visibleItems.length === 0) {
+      out.push({ type: "empty", key: "empty", message: emptyMessage });
+      return out;
+    }
+
+    const pushItems = (list: WatchlistEntry[], keyPrefix: string) => {
+      if (layoutMode === "posters") {
+        for (let i = 0; i < list.length; i += POSTER_COLUMNS) {
+          out.push({
+            type: "posters",
+            key: `${keyPrefix}-row-${i}`,
+            items: list.slice(i, i + POSTER_COLUMNS),
+          });
+        }
+        return;
+      }
+
+      for (const item of list) {
+        out.push({
+          type: "entryRow",
+          key: `${keyPrefix}-${item.media_type || "media"}-${item.id}`,
+          item,
+        });
+      }
+    };
+
+    if (statusFilter) {
+      // A status pill narrows the list to one bucket, so the
+      // available/unreleased section split no longer applies.
+      pushItems(visibleItems, "filtered");
+    } else if (activeTab === "tv") {
+      if (availableItems.length > 0) {
+        out.push({
+          type: "section",
+          key: "section-available",
+          title: "Available now",
+          count: availableItems.length,
+        });
+        pushItems(availableItems, "available");
+      }
+      if (unreleasedItems.length > 0) {
+        out.push({
+          type: "section",
+          key: "section-unreleased",
+          title: "Not yet released",
+          count: unreleasedItems.length,
+          muted: true,
+        });
+        pushItems(unreleasedItems, "unreleased");
+      }
+    } else {
+      pushItems(visibleItems, "movies");
+    }
+
+    return out;
+  }, [
+    activeTab,
+    availableItems,
+    emptyMessage,
+    layoutMode,
+    statusFilter,
+    unreleasedItems,
+    visibleItems,
+  ]);
+
+  const renderListItem = useCallback(
+    ({ item }: { item: WatchlistListItem }) => {
+      switch (item.type) {
+        case "section":
+          return (
+            <WatchlistSection
+              title={item.title}
+              count={item.count}
+              muted={item.muted}
+            >
+              {/* The section's children are separate list items; the wrapper
+                  only renders its heading. */}
+              {null}
+            </WatchlistSection>
+          );
+
+        case "posters":
+          return (
+            <XStack flexWrap="wrap" gap="$3">
+              {item.items.map((entry) => (
+                <WatchlistPosterCard
+                  key={`${entry.media_type || "media"}-${entry.id}`}
+                  item={entry}
+                  width={posterWidth}
+                  subtitle={subtitleFor(entry, false)}
+                  progress={progressFor(entry)}
+                  selected={false}
+                  selectionMode={false}
+                  onPress={() => handleItemPress(entry)}
+                />
+              ))}
+            </XStack>
+          );
+
+        case "entryRow":
+          return (
+            <WatchlistRow
+              item={item.item}
+              subtitle={subtitleFor(item.item, true)}
+              progress={progressFor(item.item)}
+              selected={false}
+              selectionMode={false}
+              onOpen={() => handleItemPress(item.item)}
+            />
+          );
+
+        case "empty":
+          return (
+            <YStack py="$8" gap="$2">
+              <Text color="$color" opacity={0.55} ta="center">
+                {item.message}
+              </Text>
+            </YStack>
+          );
+
+        default:
+          return null;
+      }
+    },
+    [handleItemPress, posterWidth, progressFor, subtitleFor],
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <XStack ai="center" jc="space-between" pb="$4">
+        <Text color="$color" fow="900" fos="$8">
+          {sectionTitle}
+        </Text>
+        <Text color="$color" opacity={0.45} fos="$2">
+          {sectionMeta}
+        </Text>
+      </XStack>
+    ),
+    [sectionMeta, sectionTitle],
+  );
+
+  if (showAuthLoading) {
     return (
       <YStack f={1} ai="center" jc="center" bg="$background">
-        <Spinner size="large" color="$color" />
+        {/* No caption: this is the session restore, and the watchlist's own
+            caption follows it immediately. */}
+        <LoadingOrb />
       </YStack>
     );
   }
@@ -476,15 +563,41 @@ export default function WatchlistScreen() {
             </XStack>
           </XStack>
 
+          {showingLocalMirror ? (
+            // Say so rather than quietly presenting an incomplete view: the
+            // mirror has no per-show progress, and it can be behind the server.
+            <YStack bg="$backgroundElement" br="$3" px="$3" py="$2" mt="$2">
+              <Text color="$color" opacity={0.7} fos="$1">
+                Offline: showing your saved titles from this device. Progress and
+                any changes from other devices will sync when you reconnect.
+              </Text>
+            </YStack>
+          ) : null}
           <YStack mt="$3" mb="$3">
-            <SearchField
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={`Search your ${activeTab === "tv" ? "shows" : "movies"}`}
-            />
+            {/* Spacing lives OUTSIDE the beam: the port traces the bounds of its
+                wrapper View, so margins on a child are measured inside the ring
+                and the ring floats away from the pill. `borderRadius` has to
+                match the wrapped pill (SearchField is radius 999 at height 50,
+                so 25), not the `md` preset's 16. The theme must come from the
+                app — the port defaults to `dark`, and this app can pin either
+                appearance. */}
+            <BorderBeam theme={isLight ? "light" : "dark"} borderRadius={25} active={typing || searching}>
+              <SearchField
+                value={searchQuery}
+                onChangeText={(value) => {
+                    setSearchQuery(value);
+                    if (value.trim()) {
+                      markTyping();
+                    } else {
+                      stopTyping();
+                    }
+                  }}
+                placeholder={`Search your ${activeTab === "tv" ? "shows" : "movies"}`}
+              />
+            </BorderBeam>
           </YStack>
 
-          {!loading && !error && items.length > 0 ? (
+          {!showLoadingUI && !error && visibleSourceItems.length > 0 ? (
             <YStack mb="$3">
               <WatchlistStatusFilter
                 options={statusOptions}
@@ -504,21 +617,16 @@ export default function WatchlistScreen() {
             onSortChange={setSortMode}
           />
 
-          {loading ? (
-            <YStack f={1} ai="center" jc="center" gap="$3">
-              <Spinner size="large" color="$color" />
-              <Text color="$color" opacity={0.5}>
-                Loading watchlist...
-              </Text>
-            </YStack>
+          {showLoadingUI ? (
+            <LoadingOrb label="Loading watchlist..." />
           ) : error ? (
             <YStack f={1} ai="center" jc="center" gap="$4">
               <Text color="$red10" ta="center" fow="700">
                 {error}
               </Text>
-              <Button onPress={() => loadWatchlist(true)}>Retry</Button>
+              <Button onPress={handleRetry}>Retry</Button>
             </YStack>
-          ) : items.length === 0 ? (
+          ) : visibleSourceItems.length === 0 ? (
             <YStack f={1} ai="center" jc="center" gap="$2" px="$5">
               <Text fow="800" fos="$6" color="$color" ta="center">
                 Your watchlist is empty
@@ -528,56 +636,22 @@ export default function WatchlistScreen() {
               </Text>
             </YStack>
           ) : (
-            <ScrollView
+            <FlashList
+              data={listData}
+              renderItem={renderListItem}
+              keyExtractor={(entry) => entry.key}
+              getItemType={(entry) => entry.type}
+              ListHeaderComponent={listHeader}
+              ItemSeparatorComponent={ListSeparator}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 120 }}
-            >
-              <YStack gap="$4">
-                <XStack ai="center" jc="space-between">
-                  <Text color="$color" fow="900" fos="$8">
-                    {sectionTitle}
-                  </Text>
-                  <Text color="$color" opacity={0.45} fos="$2">
-                    {sectionMeta}
-                  </Text>
-                </XStack>
-
-                {visibleItems.length === 0 ? (
-                  <YStack py="$8" gap="$2">
-                    <Text color="$color" opacity={0.55} ta="center">
-                      {emptyMessage}
-                    </Text>
-                  </YStack>
-                ) : statusFilter ? (
-                  // A status pill narrows the list to one bucket, so the
-                  // available/unreleased section split no longer applies.
-                  renderList(visibleItems)
-                ) : activeTab === "tv" ? (
-                  <>
-                    {availableItems.length > 0 ? (
-                      <WatchlistSection
-                        title="Available now"
-                        count={availableItems.length}
-                      >
-                        {renderList(availableItems)}
-                      </WatchlistSection>
-                    ) : null}
-
-                    {unreleasedItems.length > 0 ? (
-                      <WatchlistSection
-                        title="Not yet released"
-                        count={unreleasedItems.length}
-                        muted
-                      >
-                        {renderList(unreleasedItems)}
-                      </WatchlistSection>
-                    ) : null}
-                  </>
-                ) : (
-                  renderList(visibleItems)
-                )}
-              </YStack>
-            </ScrollView>
+              // FlashList v2 sizes itself and manages the render window
+              // internally; `initialNumToRender`/`windowSize` from v1 (and from
+              // FlatList) no longer exist. `drawDistance` is the one remaining
+              // knob, and 600dp keeps roughly a screenful of cards ready
+              // without mounting the whole watchlist.
+              drawDistance={600}
+              contentContainerStyle={styles.listContent}
+            />
           )}
         </YStack>
       </SafeAreaView>
@@ -677,3 +751,21 @@ function WatchlistSection({
     </YStack>
   );
 }
+
+/**
+ * Row spacing for the FlashList.
+ *
+ * Applied as an item separator rather than a container `gap`: a recycled list
+ * has no parent stack to space its children, and putting the spacing on the
+ * item would double it between the last item and the next section header.
+ */
+function ListSeparator() {
+  return <YStack h={12} />;
+}
+
+const styles = StyleSheet.create({
+  listContent: {
+    // Clears the floating tab bar.
+    paddingBottom: 120,
+  },
+});

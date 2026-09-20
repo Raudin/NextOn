@@ -57,13 +57,36 @@ DB_PATH=/data/nexton.db
 TMDB_API_KEY=your_tmdb_api_key_or_dummy
 OMDB_API_KEY=your_omdb_api_key
 JWT_SECRET=your_jwt_secret_key
+# Optional. Unset means in-process caching only.
+REDIS_URL=redis://redis:6379/0
 ```
+
+**Optional Redis cache.** The backend runs without Redis. When `REDIS_URL` is
+set and reachable it is used as a second-level cache for TMDB responses, the
+Discover payload, and each user's derived schedule/watchlist payload; when it is
+unset or unreachable the backend logs once at startup and uses its in-process
+caches, and a mid-flight outage degrades performance rather than failing
+requests. Per-user versioning (which drives ETag revalidation and delta sync)
+lives in SQLite, not Redis, so correctness never depends on it.
 
 ### 2. Local Quick Start
 ```bash
 cd backend
 TMDB_API_KEY=dummy go run .
 ```
+
+### 3. Delta Sync & ETag Revalidation
+User data is served with a per-user version that advances on every mutation:
+
+- `GET /api/sync/state` — cheap "has anything changed?" probe (version + per-collection counts).
+- `GET /api/sync/changes?since=<version>` — the change log after the client's cursor, with inlined entity payloads so a client can apply a delta without follow-up requests. `resync_required` is set when the cursor has fallen outside the retained log.
+- Derived payloads (`/api/home/schedule`, `/api/watchlist`) carry `ETag: W/"user-<id>-ver-<n>"`. Send it back as `If-None-Match` and an unchanged payload is answered with `304` before any database or TMDB work happens.
+
+`Cache-Control` is set per route (`public` for Discover/media, `private, no-cache`
+for per-user data, `no-store` for credentials and mutations), always with
+`Vary: Authorization` on routes whose body depends on the caller. Note that React
+Native's `fetch` has no HTTP cache, so the 304 win comes from the client sending
+`If-None-Match` explicitly; a browser (Expo Web) honours the headers directly.
 
 ### 3. Deployment to VPS (e.g., Dokploy / Docker)
 The `backend/` directory contains a multi-stage `Dockerfile` ready for deployment:
@@ -80,6 +103,37 @@ The `backend/` directory contains a multi-stage `Dockerfile` ready for deploymen
 ## 📱 Mobile App Environment & Setup
 
 The Nexton mobile frontend is built using Expo, Expo Router, Tamagui, and React Native Reanimated.
+
+### Mobile data layer
+
+Four pieces, each with a single responsibility:
+
+| Concern | Where | Notes |
+| --- | --- | --- |
+| Transport | `mobile/src/lib/http.ts` | Base-URL fallback, auth, timeouts, one retry on transient failures, a 6-request concurrency ceiling, in-flight coalescing for GETs, and conditional (`If-None-Match`) requests. React Native's `fetch` has **no** HTTP cache, so the 304 win comes from the client sending the validator explicitly — the server's `Cache-Control` matters for Expo Web and for a proxy. |
+| Read cache | `mobile/src/lib/cache.ts` | Key-value cache with a default 24h TTL on every entry, a 2 MB byte budget with oldest-first eviction, a startup pass that purges dead legacy keys, and an audit that reports bytes per key. Backed by `expo-sqlite/kv-store`. |
+| Local-first store | `mobile/src/lib/db/` | SQLite (WAL) holding the user's mutable entities, the sync cursor, and the offline outbox. |
+| Delta sync | `mobile/src/lib/sync.ts`, `mobile/src/context/SyncContext.tsx` | Pushes queued mutations, then pulls changes after the stored cursor. Runs on launch, on foreground, and on a slow timer while mutations are pending. |
+
+**Offline behaviour.** Reads fall back to the last cached payload, so Home and
+Watchlist open with real data in airplane mode. A mutation that cannot reach the
+server is queued in the outbox and replayed on reconnect; the screens update
+optimistically either way, so the user sees the change immediately. Replay is
+safe without idempotency keys because every mutating endpoint is idempotent by
+construction (adding an existing watchlist entry is a no-op; marking an episode
+watched is an upsert).
+
+**Artwork budget.** Every image declares a *role* (`mobile/src/lib/images.ts`)
+that selects both the TMDB bucket and the cache policy. This is not cosmetic:
+the original code requested `w500` for every poster, including 60pt list cells,
+which is the largest single contributor to the on-device image cache. Large
+one-shot artwork (backdrops, logos) is kept in memory only. `src/lib/image-usage.test.ts`
+fails the build if a new image drops its role argument or its cache policy.
+
+The image disk cache cannot be capped or measured from JavaScript — expo-image
+exposes no size API — so it is bounded by right-sizing plus a 30-day generational
+clear (`mobile/src/lib/image-cache.ts`), with a manual **Clear image cache**
+control in Profile → Storage for when a user is low on space.
 
 ### 1. Configure Environment Variables
 Copy `.env.example` to `.env` inside the `mobile` directory:
@@ -99,6 +153,20 @@ pnpm install
 pnpm run start
 ```
 *Alternatively, run `pnpm run android`, `pnpm run ios`, or `pnpm run web`.*
+
+Run the mobile test suite and linters with:
+```bash
+cd mobile
+pnpm test        # jest (pure logic and storage seams)
+pnpm run lint
+npx tsc --noEmit
+```
+
+> **A new native build is required.** `expo-sqlite` and `@shopify/flash-list`
+> were added as native dependencies, so an existing dev client or an OTA update
+> will not pick them up. Both are included in Expo Go for SDK 57, so
+> `pnpm run start` works for local testing; ship a fresh EAS build for
+> `preview`/`production`.
 
 ### 3. Building for Production / Live Usage
 When building native apps (using EAS Build or local native builds) or web distributions, Expo embeds `EXPO_PUBLIC_API_URL` from `.env` into the bundle:

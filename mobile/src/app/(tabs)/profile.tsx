@@ -5,7 +5,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   YStack,
   Text,
-  Spinner,
   ScrollView,
 } from "tamagui";
 import { useAuth } from "@/context/AuthContext";
@@ -14,7 +13,11 @@ import ProfileHeader from "@/components/Profile/ProfileHeader";
 import StatsGrid from "@/components/Profile/StatsGrid";
 import WatchActivityGraph from "@/components/Profile/WatchActivityGraph";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
+import DiagnosticsSection from "@/components/Profile/DiagnosticsSection";
+import LoadingOrb from "@/components/LoadingOrb";
+import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { invalidateMediaCaches } from "@/lib/cache";
+import { setTelemetryScreen } from "@/lib/telemetry";
 
 import {
   fetchUserProfile,
@@ -67,6 +70,18 @@ export default function ProfileScreen() {
   // Preferences / Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  /**
+   * What the screen renders, rather than raw `authLoading`/`loading`.
+   *
+   * Deferring the gate matters more here than anywhere: the profile is the one
+   * tab whose data is re-fetched on every focus, and the guard below only fires
+   * on a cold load (`!profileUser`), so the orb appears exactly when there is
+   * genuinely nothing to show — and then not for a two-frame flash.
+   */
+  const showLoadingUI = useDeferredLoading(
+    authLoading || (loading && !profileUser)
+  );
+
   useEffect(() => {
     if (!authLoading && !token) {
       router.replace("/auth");
@@ -99,16 +114,17 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setTelemetryScreen("profile");
       if (token) {
         loadProfile();
       }
     }, [loadProfile, token])
   );
 
-  if (authLoading || (loading && !profileUser)) {
+  if (showLoadingUI) {
     return (
       <YStack f={1} ai="center" jc="center" bg="$background">
-        <Spinner size="large" color="$color" />
+        <LoadingOrb label="Loading profile..." />
       </YStack>
     );
   }
@@ -245,6 +261,8 @@ export default function ProfileScreen() {
             <StatsGrid stats={stats} />
 
             <WatchActivityGraph items={watchHistory} />
+
+            {__DEV__ ? <DiagnosticsSection /> : null}
 
           </YStack>
         </ScrollView>

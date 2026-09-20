@@ -4,12 +4,11 @@ import { Image } from "expo-image";
 import { Animated } from "react-native";
 import { Button, Spinner, Text, XStack, YStack } from "tamagui";
 
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
 import {
-  BACKDROP_IMAGE_BASE_URL,
   fetchMediaDetails,
   fetchSeasonEpisodes,
   fetchWatchedStatus,
-  imageUrl,
   markWatched,
   mediaTitle,
   type Episode,
@@ -260,12 +259,14 @@ export default function NextEpisodeCard({
   const seasonStr = String(episode.season_number).padStart(2, "0");
   const episodeStr = String(episode.episode_number).padStart(2, "0");
 
+  // 96x64pt thumbnail: the small still bucket covers it, so the fallbacks use
+  // the same role rather than pulling a full backdrop for a postage stamp.
   const imageSource = episode.still_path
-    ? imageUrl(episode.still_path)
+    ? imageUrl(episode.still_path, "still")
     : showDetails?.backdrop_path
-      ? imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL)
+      ? imageUrl(showDetails.backdrop_path, "still")
       : show.poster_path
-        ? imageUrl(show.poster_path)
+        ? imageUrl(show.poster_path, "posterCell")
         : null;
 
   return (
@@ -293,6 +294,9 @@ export default function NextEpisodeCard({
               source={{ uri: imageSource }}
               style={{ width: "100%", height: "100%" }}
               contentFit="cover"
+              cachePolicy={imageCachePolicy("still")}
+              transition={imageTransitionMs("still")}
+              recyclingKey={imageSource}
             />
           ) : (
             <YStack f={1} ai="center" jc="center">

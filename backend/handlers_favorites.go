@@ -28,6 +28,8 @@ func handleAddFavorite(c *gin.Context) {
 
 	var existing FavoriteItem
 	if err := db.Where("user_id = ? AND media_id = ?", userUID, item.ID).First(&existing).Error; err == nil {
+		recordSyncOp(userUID, syncCollectionFavorites, syncOpUpsert,
+			watchlistEntityKey(existing.MediaType, item.ID), existing)
 		c.JSON(http.StatusOK, existing)
 		return
 	}
@@ -51,6 +53,9 @@ func handleAddFavorite(c *gin.Context) {
 		return
 	}
 
+	invalidateUserCaches(userUID)
+	recordSyncOp(userUID, syncCollectionFavorites, syncOpUpsert,
+		watchlistEntityKey(favorite.MediaType, item.ID), favorite)
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -83,7 +88,7 @@ func handleGetFavorites(c *gin.Context) {
 			CreatedAt:    dbItem.CreatedAt,
 		})
 	}
-	enrichMediaRatings(items)
+	enrichMediaRatings(items, scopeFrom(c))
 
 	sort.Slice(items, func(i, j int) bool {
 		return displayTitle(items[i]) < displayTitle(items[j])
@@ -106,11 +111,21 @@ func handleDeleteFavorite(c *gin.Context) {
 		return
 	}
 
+	// Read first so the change-log key matches the recorded insert.
+	var existing FavoriteItem
+	if err := db.Where("user_id = ? AND media_id = ?", userUID, id).First(&existing).Error; err != nil {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
 	if err := db.Where("user_id = ? AND media_id = ?", userUID, id).Delete(&FavoriteItem{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete favorite"})
 		return
 	}
 
+	invalidateUserCaches(userUID)
+	recordSyncOp(userUID, syncCollectionFavorites, syncOpDelete,
+		watchlistEntityKey(existing.MediaType, id), nil)
 	c.Status(http.StatusNoContent)
 }
 

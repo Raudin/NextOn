@@ -1,3 +1,15 @@
 allowBuilds:
-  esbuild: true   
+  # Native file watching for the Metro dev server. Allowed for the same reason
+  # esbuild and unrs-resolver are: it is a build-time/dev-tooling dependency, so
+  # its postinstall only affects the developer experience, never the shipped
+  # bundle.
+  '@parcel/watcher': true
+  # Skia's postinstall (`node scripts/install-libs.js`) unpacks the prebuilt
+  # Skia binaries that @shopify/react-native-skia pulls in as platform packages
+  # (react-native-skia-android/-apple-*, 147.1.0). Required for any NATIVE build
+  # — `expo run:android`, `prebuild`, EAS — and EAS runs this repo's pnpm
+  # config, so blocking it fails the build there too. Not needed by Expo Go, and
+  # never part of the shipped JS bundle.
+  '@shopify/react-native-skia': true
+  esbuild: true
   unrs-resolver: true

@@ -103,6 +103,7 @@ func handleClearWatchHistory(c *gin.Context) {
 		return
 	}
 
+	invalidateUserCaches(userUID)
 	c.JSON(http.StatusOK, gin.H{"message": "Watch history cleared successfully"})
 }
 
@@ -144,5 +145,6 @@ func handleDeleteAccount(c *gin.Context) {
 		return
 	}
 
+	invalidateUserCaches(userUID)
 	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
 }

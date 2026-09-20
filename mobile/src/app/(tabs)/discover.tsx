@@ -3,13 +3,18 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { Button, ScrollView, Spinner, Text, XStack, YStack, useThemeName } from "tamagui";
 
 import MediaCard from "@/components/Discover/MediaCard";
 import MediaCarousel from "@/components/Discover/MediaCarousel";
 import EmptyState from "@/components/EmptyState";
+import LoadingOrb from "@/components/LoadingOrb";
 import SearchField from "@/components/SearchField";
+import { BorderBeam } from 'border-beam-native';
+import { useDeferredLoading } from "@/hooks/use-deferred-loading";
+import { useTypingActivity } from "@/hooks/use-typing-activity";
 import { cache, invalidateMediaCaches } from "@/lib/cache";
+import { setTelemetryScreen } from "@/lib/telemetry";
 
 import {
   addToWatchlist,
@@ -42,12 +47,24 @@ export default function DiscoverScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<TMDBMedia[]>([]);
   const [watchlistIds, setWatchlistIds] = useState<Set<number>>(new Set());
+  const isLight = useThemeName() === "light";
+
+  // Drives the search field's beam: lit while typing and while the request the
+  // typing triggered is still in flight, dark otherwise. `searching` is only
+  // true between the 300ms debounce firing and the response landing, so the
+  // beam covers the whole search without any extra state.
+  const { typing, markTyping, stopTyping } = useTypingActivity();
+
+  // What the screen should render, rather than raw `loading`: the orb is held
+  // back for 150ms so a cached payload never flashes it for two frames, and
+  // held for at least 500ms once shown so it cannot blink.
+  const showLoadingUI = useDeferredLoading(loading);
 
   const hasQuery = searchQuery.trim().length > 0;
 
   const loadDiscover = React.useCallback(async (forceRefresh = false) => {
     setError(null);
-    const cachedData = await cache.get<DiscoverResponse>("discover_data");
+    const cachedData = await cache.get<DiscoverResponse>("public_discover_data");
     const cachedWatchlistIds = await cache.get<number[]>("discover_watchlist_ids");
 
     if (cachedData) {
@@ -78,7 +95,7 @@ export default function DiscoverScreen() {
 
       // 2 hours TTL for discover cache
       const TTL_2_HOURS = 2 * 60 * 60 * 1000;
-      await cache.set("discover_data", discover, TTL_2_HOURS);
+      await cache.set("public_discover_data", discover, TTL_2_HOURS);
       if (token) {
         await cache.set("discover_watchlist_ids", watchlistIdsArr, TTL_2_HOURS);
       }
@@ -103,6 +120,7 @@ export default function DiscoverScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      setTelemetryScreen("discover");
       loadDiscover(false);
     }, [loadDiscover]),
   );
@@ -238,24 +256,35 @@ export default function DiscoverScreen() {
             </XStack>
 
             <YStack mt="$3">
-              <SearchField
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search movies and TV shows"
-              />
+              <BorderBeam
+                theme={isLight ? "light" : "dark"}
+                borderRadius={25}
+                active={typing || searching}
+              >
+                <SearchField
+                  value={searchQuery}
+                  onChangeText={(value) => {
+                    setSearchQuery(value);
+                    if (value.trim()) {
+                      markTyping();
+                    } else {
+                      stopTyping();
+                    }
+                  }}
+                  placeholder="Search movies and TV shows"
+                />
+              </BorderBeam>
             </YStack>
           </YStack>
 
-          {loading && (
-            <YStack f={1} ai="center" jc="center" gap="$3">
-              <Spinner size="large" color="$color" />
-              <Text color="$color" opacity={0.5} fos="$2">
-                Loading media...
-              </Text>
-            </YStack>
-          )}
+          {/*
+            All three branches below gate on `showLoadingUI`, not `loading`:
+            while the deferred flag is down they must agree, or the error or
+            content branch would paint underneath the orb.
+          */}
+          {showLoadingUI && <LoadingOrb label="Loading media..." />}
 
-          {!loading && error && (
+          {!showLoadingUI && error && (
             <YStack f={1} ai="center" jc="center" gap="$4">
               <Text color="$red10" fow="600" ta="center" fos="$4">
                 {error}
@@ -266,7 +295,20 @@ export default function DiscoverScreen() {
             </YStack>
           )}
 
-          {!loading && !error && (
+          {!showLoadingUI && !error && (
+            /**
+             * A plain vertical ScrollView, deliberately.
+             *
+             * Both modes here are bounded, so virtualizing the page itself would
+             * buy nothing: browsing renders exactly three carousels, and search
+             * renders at most the ~20 results TMDB returns. The unbounded cost
+             * on this screen was the carousels mounting every card at once,
+             * which each `MediaCarousel` now avoids by recycling horizontally.
+             *
+             * This also keeps exactly one vertical scroll owner, which is what
+             * matters: a vertical list nested in a vertical ScrollView would
+             * break both.
+             */
             <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 120, gap: 28 }}

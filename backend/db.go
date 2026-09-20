@@ -23,7 +23,15 @@ func initDB() {
 	}
 
 	// Auto Migrate
-	err = db.AutoMigrate(&User{}, &WatchlistItem{}, &WatchedItem{}, &FavoriteItem{})
+	err = db.AutoMigrate(
+		&User{},
+		&WatchlistItem{},
+		&WatchedItem{},
+		&FavoriteItem{},
+		&MediaRating{},
+		&UserSyncState{},
+		&SyncOp{},
+	)
 	if err != nil {
 		log.Fatalf("Failed to auto migrate database: %v", err)
 	}

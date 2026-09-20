@@ -6,16 +6,17 @@ import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import BackButton from "@/components/BackButton";
+import LoadingOrb from "@/components/LoadingOrb";
 import { useAuth } from "@/context/AuthContext";
+import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { invalidateMediaCaches } from "@/lib/cache";
+import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
+import { setTelemetryScreen } from "@/lib/telemetry";
 
 import {
-  BACKDROP_IMAGE_BASE_URL,
-  IMAGE_BASE_URL,
   fetchEpisodeDetails,
   fetchMediaDetails,
   fetchWatchedStatus,
-  imageUrl,
   markWatched,
   unmarkWatched,
   type Episode,
@@ -38,6 +39,11 @@ export default function EpisodeDetailScreen() {
   const [watched, setWatched] = useState(false);
   const [toggling, setToggling] = useState(false);
 
+  // What the screen should render, rather than raw `loading`: the orb is held
+  // back for 150ms so a cached payload never flashes it for two frames, and
+  // held for at least 500ms once shown so it cannot blink.
+  const showLoadingUI = useDeferredLoading(loading);
+
   const isEpisodeUnreleased = useMemo(() => {
     if (!episode?.air_date) return false;
     const parts = episode.air_date.split("-");
@@ -50,6 +56,7 @@ export default function EpisodeDetailScreen() {
 
   useEffect(() => {
     let mounted = true;
+    setTelemetryScreen("episode");
     const load = async () => {
       if (!params.id || !params.season || !params.episode) {
         return;
@@ -149,13 +156,8 @@ export default function EpisodeDetailScreen() {
   return (
     <YStack f={1} bg="$background">
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        {loading ? (
-          <YStack f={1} ai="center" jc="center" gap="$3">
-            <Spinner size="large" color="$color" />
-            <Text color="$color" opacity={0.55}>
-              Loading episode...
-            </Text>
-          </YStack>
+        {showLoadingUI ? (
+          <LoadingOrb label="Loading episode..." />
         ) : error ? (
           <YStack f={1} ai="center" jc="center" gap="$4" px="$4">
             <Text color="$red10" fow="700" ta="center">
@@ -172,27 +174,30 @@ export default function EpisodeDetailScreen() {
             <YStack h={520} bg="#151515">
               {episode.still_path ? (
                 <Image
-                  source={{
-                    uri: imageUrl(episode.still_path, BACKDROP_IMAGE_BASE_URL),
-                  }}
+                  source={{ uri: imageUrl(episode.still_path, "backdrop") }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
+                  cachePolicy={imageCachePolicy("backdrop")}
+                  transition={imageTransitionMs("backdrop")}
+                  recyclingKey={episode.still_path}
                 />
               ) : showDetails?.backdrop_path ? (
                 <Image
-                  source={{
-                    uri: imageUrl(showDetails.backdrop_path, BACKDROP_IMAGE_BASE_URL),
-                  }}
+                  source={{ uri: imageUrl(showDetails.backdrop_path, "backdrop") }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
+                  cachePolicy={imageCachePolicy("backdrop")}
+                  transition={imageTransitionMs("backdrop")}
+                  recyclingKey={showDetails.backdrop_path}
                 />
               ) : showDetails?.poster_path ? (
                 <Image
-                  source={{
-                    uri: imageUrl(showDetails.poster_path, IMAGE_BASE_URL),
-                  }}
+                  source={{ uri: imageUrl(showDetails.poster_path, "posterCard") }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
+                  cachePolicy={imageCachePolicy("posterCard")}
+                  transition={imageTransitionMs("posterCard")}
+                  recyclingKey={showDetails.poster_path}
                 />
               ) : (
                 <YStack f={1} ai="center" jc="center">

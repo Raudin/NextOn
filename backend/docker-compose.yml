@@ -14,8 +14,40 @@ services:
       - OMDB_API_KEY=${OMDB_API_KEY:-}
       - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_here}
       - GIN_MODE=${GIN_MODE:-release}
+      # Optional. Unset or unreachable means the backend silently falls back to
+      # its in-process caches, so this never blocks startup.
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - nexton_data:/data
+
+  # Pure cache: no persistence, no host port, memory-bounded with LRU eviction.
+  # Nothing here is a source of truth — losing the volume on redeploy costs a
+  # few TMDB lookups, not data, which is why there is no redis_data volume.
+  redis:
+    image: redis:7-alpine
+    container_name: nexton-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    expose:
+      - "6379"
 
 volumes:
   nexton_data:

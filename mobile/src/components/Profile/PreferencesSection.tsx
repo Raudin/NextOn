@@ -1,9 +1,10 @@
 import React from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bell,
   ChevronRight,
+  ImageOff,
   LogOut,
   RotateCcw,
   SunMoon,
@@ -11,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { Button, Text, XStack, YStack } from "tamagui";
+import { clearImageCache } from "@/lib/image-cache";
 import { type User } from "@/lib/media-api";
 import { useTheme } from "@/hooks/use-theme";
 import {
@@ -99,6 +101,23 @@ export default function PreferencesSection({
   const insets = useSafeAreaInsets();
   const theme = useTheme();
 
+  /**
+   * Clears the downloaded-artwork cache.
+   *
+   * This is the only way a user can reclaim it: expo-image exposes no size or
+   * limit API, and iOS offers no per-app "clear cache" action in Settings, so
+   * without this the only recourse would be reinstalling the app.
+   */
+  const handleClearImageCache = async () => {
+    const cleared = await clearImageCache();
+    Alert.alert(
+      cleared ? "Image cache cleared" : "Could not clear the cache",
+      cleared
+        ? "Downloaded artwork has been removed. Images will load again as you browse."
+        : "Something went wrong while clearing the cache. Please try again.",
+    );
+  };
+
   return (
     <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -172,6 +191,20 @@ export default function PreferencesSection({
                         <ChevronRight size={16} color={theme.textSecondary} strokeWidth={2.4} />
                       </XStack>
                     }
+                  />
+                </Group>
+              </YStack>
+
+              <YStack gap={8}>
+                <SectionHeader>Storage</SectionHeader>
+                <Group>
+                  <SettingsRow
+                    icon={ImageOff}
+                    tint="#0A84FF"
+                    title="Clear image cache"
+                    subtitle="Reclaims downloaded artwork. Images re-download as you browse."
+                    trailing={null}
+                    onPress={handleClearImageCache}
                   />
                 </Group>
               </YStack>
