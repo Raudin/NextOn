@@ -135,6 +135,29 @@ exposes no size API — so it is bounded by right-sizing plus a 30-day generatio
 clear (`mobile/src/lib/image-cache.ts`), with a manual **Clear image cache**
 control in Profile → Storage for when a user is low on space.
 
+**Platform-native UI.** Three controls are drawn with **Jetpack Compose on
+Android** through `@expo/ui`, while iOS and web keep the implementations they
+always had:
+
+| Feature | Shared entry point | Android (`*.android.tsx`) |
+| --- | --- | --- |
+| Confirmation alerts | `mobile/src/components/ui/ConfirmDialog.tsx` | Material 3 `AlertDialog`; iOS uses `Alert`, web uses `window.confirm` |
+| TV show progress | `mobile/src/components/Watchlist/ProgressBarFill.tsx`, `ProgressRing.tsx` | `LinearProgressIndicator` and `CircularProgressIndicator` |
+| Notifications toggle | `mobile/src/components/Profile/SettingsSwitch.tsx` | Material 3 `Switch` |
+
+Metro resolves the `.android.tsx` file on Android and the default file
+everywhere else, which is the same platform-split the app already uses for
+`.web.tsx`. Each pair shares one props module (`progress-props.ts`,
+`settings-switch.ts`, `confirm-dialog.types.ts`) so the variants cannot drift,
+and every Compose component is passed explicit colours from
+`mobile/src/hooks/use-theme.ts` so Material You does not override the app's
+palette.
+
+The dialog is declarative rather than an `Alert.alert` call precisely because of
+this: Compose's `AlertDialog` has to be mounted inside a `Host` in the tree. The
+state reducer behind it is unit-tested (`confirm-dialog-state.test.ts`); the rest
+is verified on a device, per the policy in `mobile/jest.config.js`.
+
 ### 1. Configure Environment Variables
 Copy `.env.example` to `.env` inside the `mobile` directory:
 ```bash
@@ -167,6 +190,12 @@ npx tsc --noEmit
 > will not pick them up. Both are included in Expo Go for SDK 57, so
 > `pnpm run start` works for local testing; ship a fresh EAS build for
 > `preview`/`production`.
+>
+> `@expo/ui` is in the same position, and on Android it also needs a **clean
+> prebuild** the first time: regenerate the native project with
+> `npx expo prebuild --clean -p android` before `npx expo run:android`, so the
+> `ExpoUI` module is autolinked. It is included in Expo Go for SDK 57 as well,
+> so `pnpm run android` remains the quickest way to check the Compose controls.
 
 ### 3. Building for Production / Live Usage
 When building native apps (using EAS Build or local native builds) or web distributions, Expo embeds `EXPO_PUBLIC_API_URL` from `.env` into the bundle:

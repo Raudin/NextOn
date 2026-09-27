@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Alert, Platform, StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -15,6 +15,8 @@ import WatchActivityGraph from "@/components/Profile/WatchActivityGraph";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
 import DiagnosticsSection from "@/components/Profile/DiagnosticsSection";
 import LoadingOrb from "@/components/LoadingOrb";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { useConfirmDialog } from "@/components/ui/use-confirm-dialog";
 import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { invalidateMediaCaches } from "@/lib/cache";
 import { setTelemetryScreen } from "@/lib/telemetry";
@@ -29,27 +31,6 @@ import {
   type User,
   type WatchedItem,
 } from "@/lib/media-api";
-
-const showConfirmDialog = (
-  title: string,
-  message: string,
-  onConfirm: () => void
-) => {
-  if (Platform.OS === "web") {
-    const confirm = window.confirm(`${title}\n\n${message}`);
-    if (confirm) onConfirm();
-  } else {
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Confirm", style: "destructive", onPress: onConfirm },
-      ],
-      { cancelable: true }
-    );
-  }
-};
 
 export default function ProfileScreen() {
   const { token, logout, isLoading: authLoading, themeMode, setThemeMode, updateUser } = useAuth();
@@ -69,6 +50,16 @@ export default function ProfileScreen() {
 
   // Preferences / Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  /**
+   * The one confirmation dialog this screen shows.
+   *
+   * Declarative rather than `Alert.alert`, because Android renders it with
+   * Jetpack Compose and a Compose dialog has to be mounted inside a `Host` in
+   * the tree. Hooks run before the loading and error returns below, so the
+   * dialog stays mounted for the whole life of the screen.
+   */
+  const { confirm, dialogProps } = useConfirmDialog();
 
   /**
    * What the screen renders, rather than raw `authLoading`/`loading`.
@@ -143,7 +134,12 @@ export default function ProfileScreen() {
 
   const handleUpdateProfileDetails = async () => {
     if (!editName.trim()) {
-      showConfirmDialog("Validation Error", "Name cannot be empty.", () => {});
+      confirm({
+        title: "Validation Error",
+        message: "Name cannot be empty.",
+        infoOnly: true,
+        onConfirm: () => {},
+      });
       return;
     }
     setUpdating(true);
@@ -184,11 +180,31 @@ export default function ProfileScreen() {
     await setThemeMode(nextMode);
   };
 
+  /**
+   * The artwork-cache notice, raised from the settings sheet.
+   *
+   * It is shown here rather than inside the sheet because on Android the sheet
+   * is a React Native modal window, and a Compose dialog wants to be the only
+   * window in play.
+   */
+  const handleImageCacheCleared = (cleared: boolean) => {
+    confirm({
+      title: cleared ? "Image cache cleared" : "Could not clear the cache",
+      message: cleared
+        ? "Downloaded artwork has been removed. Images will load again as you browse."
+        : "Something went wrong while clearing the cache. Please try again.",
+      infoOnly: true,
+      onConfirm: () => {},
+    });
+  };
+
   const handleClearHistory = () => {
-    showConfirmDialog(
-      "Clear Watch History",
-      "Are you absolutely sure you want to clear your entire watch history? This will reset all your level stats and active streaks forever.",
-      async () => {
+    confirm({
+      title: "Clear Watch History",
+      message:
+        "Are you absolutely sure you want to clear your entire watch history? This will reset all your level stats and active streaks forever.",
+      destructive: true,
+      onConfirm: async () => {
         try {
           await clearWatchHistory();
           // Invalidate affected caches
@@ -197,15 +213,17 @@ export default function ProfileScreen() {
         } catch (err: any) {
           setError(err.message || "Failed to clear watch history.");
         }
-      }
-    );
+      },
+    });
   };
 
   const handleDeleteUserAccount = () => {
-    showConfirmDialog(
-      "Delete Account",
-      "Are you absolutely sure you want to delete your account? This will permanently erase your profile, watch list, and history. This action cannot be undone.",
-      async () => {
+    confirm({
+      title: "Delete Account",
+      message:
+        "Are you absolutely sure you want to delete your account? This will permanently erase your profile, watch list, and history. This action cannot be undone.",
+      destructive: true,
+      onConfirm: async () => {
         try {
           await deleteUserAccount();
           await logout();
@@ -213,19 +231,20 @@ export default function ProfileScreen() {
         } catch (err: any) {
           setError(err.message || "Failed to delete account.");
         }
-      }
-    );
+      },
+    });
   };
 
   const handleLogoutPress = () => {
-    showConfirmDialog(
-      "Log Out",
-      "Are you sure you want to log out of Nexton?",
-      async () => {
+    confirm({
+      title: "Log Out",
+      message: "Are you sure you want to log out of Nexton?",
+      destructive: true,
+      onConfirm: async () => {
         await logout();
         router.replace("/auth");
-      }
-    );
+      },
+    });
   };
 
   return (
@@ -279,7 +298,15 @@ export default function ProfileScreen() {
         onClearHistory={handleClearHistory}
         onDeleteAccount={handleDeleteUserAccount}
         onLogout={handleLogoutPress}
+        onImageCacheCleared={handleImageCacheCleared}
       />
+
+      {/*
+        Sibling of the sheet, not a child of it: on Android this dialog is a
+        Compose window of its own, and it must not be nested inside the modal
+        window the sheet uses.
+      */}
+      {dialogProps ? <ConfirmDialog {...dialogProps} /> : null}
     </YStack>
   );
 }

@@ -9,7 +9,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, Check, Clapperboard, Heart, Lock, Plus } from "lucide-react-native";
 import {
-  Alert,
   Linking,
   StyleSheet,
   TouchableOpacity,
@@ -17,6 +16,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { useConfirmDialog } from "@/components/ui/use-confirm-dialog";
 
 import {
   addToFavorites,
@@ -76,6 +78,13 @@ export default function MediaDetailScreen() {
    * and titles whose season lookup failed.
    */
   const [tvProgress, setTvProgress] = useState<TvProgress | null>(null);
+
+  /**
+   * The one confirmation dialog this screen shows: marking every earlier
+   * episode watched. Declarative because Android renders it with Jetpack
+   * Compose, which needs the dialog mounted inside a `Host`.
+   */
+  const { confirm, dialogProps } = useConfirmDialog();
 
   const isMovie = params.type === "movie";
   const isTv = params.type === "tv";
@@ -573,38 +582,38 @@ export default function MediaDetailScreen() {
       return;
     }
 
-    Alert.alert(
-      "Mark Previous Episodes?",
-      "Would you like to mark all previous episodes of this show as watched too?",
-      [
-        { text: "No", onPress: markSingle },
-        {
-          text: "Yes",
-          onPress: async () => {
-            const toMark = seasonEpisodesList.slice(0, index + 1);
-            const next = new Set(watchedEpisodes);
-            const payload = toMark.map((e) => ({
-              media_id: details.id,
-              media_type: "tv" as const,
-              season_number: e.season_number,
-              episode_number: e.episode_number,
-            }));
-            toMark.forEach((e) =>
-              next.add(episodeKey(e.season_number, e.episode_number)),
-            );
-            setWatchedEpisodes(next);
-            try {
-              await markWatchedBulk(payload);
-              await invalidateMediaCaches();
-              syncTvProgress();
-            } catch (err: any) {
-              setError(err.message || String(err));
-              loadAll();
-            }
-          },
-        },
-      ],
-    );
+    confirm({
+      title: "Mark Previous Episodes?",
+      message:
+        "Would you like to mark all previous episodes of this show as watched too?",
+      confirmLabel: "Yes",
+      cancelLabel: "No",
+      // "No" still records this episode; waving the dialog away does not, which
+      // is why the decline is separate from the dismissal.
+      onCancel: markSingle,
+      onConfirm: async () => {
+        const toMark = seasonEpisodesList.slice(0, index + 1);
+        const next = new Set(watchedEpisodes);
+        const payload = toMark.map((e) => ({
+          media_id: details.id,
+          media_type: "tv" as const,
+          season_number: e.season_number,
+          episode_number: e.episode_number,
+        }));
+        toMark.forEach((e) =>
+          next.add(episodeKey(e.season_number, e.episode_number)),
+        );
+        setWatchedEpisodes(next);
+        try {
+          await markWatchedBulk(payload);
+          await invalidateMediaCaches();
+          syncTvProgress();
+        } catch (err: any) {
+          setError(err.message || String(err));
+          loadAll();
+        }
+      },
+    });
   };
 
   const openEpisode = (episode: Episode) => {
@@ -1130,6 +1139,10 @@ export default function MediaDetailScreen() {
           </ScrollView>
         ) : null}
       </SafeAreaView>
+
+      {/* Sibling of the scroll view, and rendered whether or not details have
+          loaded, so the dialog is never unmounted out from under itself. */}
+      {dialogProps ? <ConfirmDialog {...dialogProps} /> : null}
     </YStack>
   );
 }

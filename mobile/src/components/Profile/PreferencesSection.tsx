@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bell,
@@ -15,6 +15,7 @@ import { Button, Text, XStack, YStack } from "tamagui";
 import { clearImageCache } from "@/lib/image-cache";
 import { type User } from "@/lib/media-api";
 import { useTheme } from "@/hooks/use-theme";
+import SettingsSwitch from "@/components/Profile/SettingsSwitch";
 import {
   Group,
   IconTile,
@@ -34,6 +35,14 @@ interface PreferencesSectionProps {
   onClearHistory: () => void;
   onDeleteAccount: () => void;
   onLogout: () => void;
+  /**
+   * Reports the outcome of clearing the artwork cache.
+   *
+   * The sheet raises the notice rather than showing it: a dialog rendered
+   * inside this modal would be a Compose window inside a React Native modal
+   * window on Android, and the profile screen already owns the dialog host.
+   */
+  onImageCacheCleared: (cleared: boolean) => void;
 }
 
 const DESTRUCTIVE = "#FF3B30";
@@ -97,6 +106,7 @@ export default function PreferencesSection({
   onClearHistory,
   onDeleteAccount,
   onLogout,
+  onImageCacheCleared,
 }: PreferencesSectionProps) {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
@@ -109,13 +119,7 @@ export default function PreferencesSection({
    * without this the only recourse would be reinstalling the app.
    */
   const handleClearImageCache = async () => {
-    const cleared = await clearImageCache();
-    Alert.alert(
-      cleared ? "Image cache cleared" : "Could not clear the cache",
-      cleared
-        ? "Downloaded artwork has been removed. Images will load again as you browse."
-        : "Something went wrong while clearing the cache. Please try again.",
-    );
+    onImageCacheCleared(await clearImageCache());
   };
 
   return (
@@ -169,11 +173,10 @@ export default function PreferencesSection({
                     tint="#FF9500"
                     title="Notifications"
                     trailing={
-                      <Switch
+                      <SettingsSwitch
                         value={!!profileUser.notifications_enabled}
                         onValueChange={onToggleNotifications}
-                        trackColor={{ false: theme.backgroundSelected, true: "#34C759" }}
-                        ios_backgroundColor={theme.backgroundSelected}
+                        label="Notifications"
                       />
                     }
                   />

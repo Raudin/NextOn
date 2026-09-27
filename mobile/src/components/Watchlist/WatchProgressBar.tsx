@@ -1,5 +1,6 @@
-import { Text, XStack, YStack } from "tamagui";
+import { Text, XStack } from "tamagui";
 
+import ProgressBarFill from "./ProgressBarFill";
 import { useProgressTheme } from "./useProgressTheme";
 
 interface WatchProgressBarProps {
@@ -27,6 +28,10 @@ interface WatchProgressBarProps {
  * where the circular ring from the poster layout reads poorly. Also drawn on
  * the media-detail hero, where the watchlist row's track colour would vanish
  * into the backdrop.
+ *
+ * The row and the label are identical on every platform, so they live here; the
+ * bar itself is platform-specific in `ProgressBarFill`, which Android draws
+ * with Jetpack Compose.
  */
 export default function WatchProgressBar({
   progress,
@@ -38,20 +43,11 @@ export default function WatchProgressBar({
 
   return (
     <XStack ai="center" gap="$2">
-      <YStack
-        f={1}
-        h={5}
-        borderRadius={999}
-        bg={trackColor ?? "$background"}
-        overflow="hidden"
-      >
-        <YStack
-          h="100%"
-          w={`${Math.max(2, percentage)}%`}
-          bg={barColor ?? accent}
-          borderRadius={999}
-        />
-      </YStack>
+      <ProgressBarFill
+        progress={progress}
+        trackColor={trackColor}
+        barColor={barColor}
+      />
       {showLabel ? (
         <Text color={accent} fos="$2" fow="800" miw={34} ta="right">
           {percentage}%
@@ -60,3 +56,4 @@ export default function WatchProgressBar({
     </XStack>
   );
 }
+
