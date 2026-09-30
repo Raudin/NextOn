@@ -182,9 +182,21 @@ func (m *metricsRegistry) route(pattern string) *routeStat {
 }
 
 // MetricsMiddleware records per-route latency and outbound-call fan-out.
+//
+// It feeds two consumers from one observation: the JSON snapshot behind
+// /api/debug/stats (metrics.route(...).observe) and the Prometheus series
+// exposed by prometheus.go (observeHTTPRequest). Neither is derived from the
+// other, so a change here has to keep both in mind.
 func MetricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		started := time.Now()
+		httpRequestsInFlight.Inc()
+		// Deferred rather than decremented after c.Next(): a panicking handler
+		// unwinds through this middleware before gin's Recovery middleware
+		// catches it, and a gauge stuck above zero is worse than a missing
+		// observation.
+		defer httpRequestsInFlight.Dec()
+
 		c.Next()
 
 		pattern := c.FullPath()
@@ -194,12 +206,21 @@ func MetricsMiddleware() gin.HandlerFunc {
 			pattern = "unmatched"
 		}
 
+		// A scrape is not traffic. The exposition is served on its own
+		// listener, so this only matters if /metrics is ever wired into this
+		// router — in which case it must not appear in its own dashboards.
+		if pattern == metricsPath {
+			return
+		}
+
 		status := c.Writer.Status()
+		elapsed := time.Since(started)
 		metrics.route(pattern).observe(
-			time.Since(started).Nanoseconds(),
+			elapsed.Nanoseconds(),
 			status >= http.StatusBadRequest,
 			scopeFrom(c),
 		)
+		observeHTTPRequest(pattern, c.Request.Method, status, elapsed, c.Writer.Size())
 	}
 }
 

@@ -48,6 +48,12 @@ func main() {
 		log.Println("OMDB_API_KEY loaded successfully.")
 	}
 
+	// Prometheus exposition, on its own listener so that routing to the API's
+	// public domain cannot reach it. No-op when METRICS_ADDR is unset. Started
+	// after the configuration checks so that a fatal misconfiguration reports
+	// first rather than being preceded by a metrics log line.
+	startMetricsServer()
+
 	log.Printf("Server starting on port %s...", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to run server: %v", err)

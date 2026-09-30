@@ -1,0 +1,38 @@
+# Grafana dashboard provider — OPTIONAL.
+#
+# Only needed if you would rather load the dashboard from a file than import it.
+# The short path needs no file at all:
+#
+#   Dashboards -> New -> Import -> Upload JSON file
+#   pick monitoring/dashboards/nexton-api.json
+#
+# If you do use this file, mount it at
+# /etc/grafana/provisioning/dashboards/nexton-dashboards.yml and mount
+# monitoring/dashboards/nexton-api.json at /etc/grafana/dashboards/.
+#
+# Grafana re-reads the folder on updateIntervalSeconds, so replacing the JSON
+# only needs a restart (or a 30s wait). allowUiUpdates is on because tuning a
+# panel in the UI and copying the JSON back into this repository is the intended
+# workflow: the file stays the source of truth without making the UI read-only.
+#
+# The path is /etc/grafana/dashboards rather than the more common
+# /var/lib/grafana/dashboards deliberately: that second path sits inside the
+# grafana-storage volume the Dokploy template creates, and mounting a file into a
+# subdirectory of another mount is unreliable for the services Dokploy deploys.
+#
+# The committed dashboard is schemaVersion 39. Grafana 12 migrates older
+# dashboards forward on load, so no conversion is needed.
+
+apiVersion: 1
+
+providers:
+  - name: nexton
+    orgId: 1
+    folder: Nexton
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

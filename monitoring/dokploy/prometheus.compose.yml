@@ -1,0 +1,49 @@
+# Prometheus as created by Dokploy's "+ Create service" template, with the two
+# changes it needs in order to talk to the backend. Paste this into the
+# Prometheus service's compose editor in Dokploy.
+#
+# What deviates from the template, and why:
+#
+#  1. The template enables --web.enable-lifecycle. That exposes /-/reload and
+#     /-/quit over HTTP, and the template also declares a public domain on port
+#     9090 — so the two together mean anyone who finds that address can
+#     reconfigure or shut Prometheus down. Removed here: changing the scrape
+#     config means editing the File Mount and redeploying, which is the workflow
+#     either way.
+#
+#  2. The dokploy-network block. The template creates Prometheus as its own
+#     isolated stack, so it cannot see the backend (a Dokploy Application, i.e.
+#     a Swarm service) and Grafana cannot see it. dokploy-network is the network
+#     Traefik already uses to reach applications, so joining it makes all three
+#     mutually resolvable without publishing a single port.
+#
+# The config file is deliberately NOT mounted from this repository. ../files/ is
+# Dokploy's persistent per-service folder, and ../files/prometheus.yml is the
+# File Mount the template already created (Advanced -> Mounts). Its content has
+# to be replaced with monitoring/prometheus.yml from this repository — that is
+# the step that tells Prometheus where the backend is.
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    volumes:
+      - ../files/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - dokploy-network
+
+volumes:
+  prometheus-data: {}
+
+networks:
+  # Created by Dokploy and already joined by Traefik and every application it
+  # routes to, which is how the backend is reachable below by its Swarm service
+  # name rather than by an IP address.
+  dokploy-network:
+    external: true

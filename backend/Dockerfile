@@ -30,7 +30,14 @@ RUN mkdir -p /data
 ENV PORT=8080
 ENV DB_PATH=/data/nexton.db
 ENV GIN_MODE=release
+# Prometheus exposition. Served on its own listener inside the container so that
+# routing to the API's public domain cannot reach it; see monitoring/ for the
+# scraper. Override or blank it in the service's environment as needed.
+ENV METRICS_ADDR=:9090
 
 EXPOSE 8080
+# Reachable only from the project network. Deliberately not published and with
+# no domain: an in-network scrape is the only intended client.
+EXPOSE 9090
 
 CMD ["/app/main"]

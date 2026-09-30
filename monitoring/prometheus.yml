@@ -1,0 +1,64 @@
+# Prometheus scrape configuration for the Nexton backend.
+#
+# Where this goes (Dokploy): the Prometheus service created from Dokploy's
+# template already has a File Mount named `prometheus.yml` (Advanced -> Mounts)
+# mounted at /etc/prometheus/prometheus.yml. Replace that mount's content with
+# this file. It has to be a Dokploy File Mount rather than a bind mount from this
+# repository, because AutoDeploy re-clones the checkout on every deployment and a
+# repository-relative mount (./prometheus.yml) comes up empty on the second
+# deploy even though the first one worked.
+#
+# The one line that must be edited is the backend target under scrape_configs:
+# Dokploy names Swarm services with a generated suffix, so the real name has to
+# come from `docker service ls` or the backend service's General tab.
+
+global:
+  # 15s matches the metric's own resolution: the API aggregates per request, and
+  # the dashboards use rate windows, so scraping faster would only cost disk.
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  # The same label the Dokploy template's own config would have set, so these
+  # series stay attributable if a second Prometheus is ever pointed at the API.
+  external_labels:
+    monitor: nexton-prometheus
+
+scrape_configs:
+  - job_name: nexton-backend
+    metrics_path: /metrics
+
+    # Uncomment if the backend service sets METRICS_TOKEN. Keeping the token out
+    # of this file is preferable when the scrape happens over the internal
+    # network, which is why it is off by default.
+    #
+    # authorization:
+    #   type: Bearer
+    #   credentials: "<METRICS_TOKEN>"
+
+    static_configs:
+      # TARGET: the backend service's Docker Swarm service name, reachable over
+      # the shared project network. Read it with:
+      #
+      #   docker service ls
+      #
+      # or from the Dokploy UI: project "nexton" -> backend -> the swarm service
+      # name shown in the General tab. Dokploy names Swarm services with a
+      # generated suffix, so this cannot be guessed — replace the placeholder
+      # below with the real value. Grafana and the dashboards do not depend on
+      # this label, so only this one line needs to change.
+      #
+      # The port is the container-internal metrics listener (METRICS_ADDR on the
+      # backend service). It is never a published host port and there is
+      # deliberately no domain pointing at it, so a scrape is the only way to
+      # reach it.
+      - targets: ["nexton-backend:9090"]
+        labels:
+          service: nexton-backend
+          env: production
+
+  # Scraping Prometheus with Prometheus is not vanity: target health, scrape
+  # duration and TSDB size all surface as its own series, which is what turns
+  # "the dashboard is empty" into a diagnosable problem.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

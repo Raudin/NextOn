@@ -96,7 +96,133 @@ The `backend/` directory contains a multi-stage `Dockerfile` ready for deploymen
   - `TMDB_API_KEY`: TMDB API key or `dummy`
   - `OMDB_API_KEY`: OMDb API key used for IMDb, Metascore, and Rotten Tomatoes ratings
   - `JWT_SECRET`: Secret key for JWT token signing
+  - `METRICS_ADDR`: Address for the Prometheus exposition listener (the image defaults to `:9090`; unset disables it entirely)
+  - `METRICS_TOKEN`: Optional bearer token for that listener. Leave unset for an in-network scrape
+  - `APP_VERSION`: Optional label reported as `nexton_build_info{version=...}`
 - **Persistent Storage**: Mount a persistent volume at `/data` so `nexton.db` persists across container redeployments.
+
+See [Monitoring](#4-monitoring-prometheus--grafana) for the metrics the service exposes and how to stand up Prometheus and Grafana next to it.
+
+### 4. Monitoring (Prometheus + Grafana)
+
+`backend/metrics.go` has always maintained the numbers that matter for this service — per-route latency and errors, outbound TMDB/OMDb call counts, Redis hit and error rates. Until now the only way to read them was `/api/debug/stats`, which release mode deliberately does not register, so production was unobservable. `backend/prometheus.go` is the scrapeable view of those same counters.
+
+**Design rules worth knowing before changing any of it:**
+
+- **The counters are not duplicated.** The process-wide totals are read from the existing atomics through `CounterFunc` at scrape time, so `/api/debug/stats` and Prometheus cannot disagree, and the request path gained no extra increments. Only the per-request observations (status, latency, response size) are recorded separately, because a histogram cannot be reconstructed from a total.
+- **The exposition is on its own listener**, `METRICS_ADDR` (the image sets `:9090`), not a route on the API router. The API answers on a public domain; keeping metrics off it means a routing mistake cannot expose traffic patterns, and it is why an in-network scrape needs no credentials.
+- **Unset means off**, the same convention `REDIS_URL` uses: one log line and no listener.
+- **Labels are bounded by construction.** `route` is always a gin route pattern or the literal `unmatched`, never a raw URL.
+
+**Metrics exposed**
+
+| Metric | Type | Notes |
+| --- | --- | --- |
+| `nexton_http_requests_total{route,method,status}` | counter | 304s are included, so the ETag revalidation win is a `status` filter away |
+| `nexton_http_request_duration_seconds{route,method}` | histogram | Buckets reach 10s because TMDB fan-out dominates |
+| `nexton_http_response_size_bytes{route}` | histogram | The only direct measurement of the payload budget |
+| `nexton_http_requests_in_flight` | gauge | A sustained climb points at outbound calls, not inbound traffic |
+| `nexton_route_tmdb_calls_total{route}` | counter | Outbound fan-out per route — divide by the request rate for calls *per request* |
+| `nexton_route_omdb_calls_total{route}`, `nexton_route_omdb_store_lookups_total{route}` | counter | The same, for OMDb |
+| `nexton_tmdb_fetches_total`, `nexton_tmdb_cache_hits_total`, `nexton_tmdb_cache_misses_total` | counter | The caching design's scoreboard |
+| `nexton_omdb_fetches_total`, `nexton_omdb_store_hits_total`, `nexton_omdb_store_misses_total` | counter | Ratings resolved in the background rather than on the request path |
+| `nexton_redis_cache_hits_total`, `nexton_redis_cache_misses_total`, `nexton_redis_errors_total` | counter | `nexton_redis_errors_total` is the only visible signal of a bad `REDIS_URL`, because the fallback is silent by design |
+| `nexton_uptime_seconds`, `nexton_build_info` | gauge | Uptime resets, and which rollout is running |
+| `go_*`, `process_*` | — | Goroutines, heap, GC, RSS and file descriptors from the standard collectors |
+
+The deployment artifacts live in `monitoring/`: `prometheus.yml` (the scrape config, which becomes the `prometheus.yml` File Mount), `dokploy/prometheus.compose.yml` and `dokploy/grafana.compose.yml` (the two template stacks as they should be configured, ready to paste into Dokploy), `grafana-datasource.yml` and `grafana-dashboards.yml` (the optional file-based Grafana provisioning) and `dashboards/nexton-api.json` (18 panels covering traffic, latency, ETag revalidation, cache effectiveness, outbound pressure, runtime health, and a scrape-target up/down indicator).
+
+### 5. Deploying Prometheus and Grafana in Dokploy
+
+Both were created with Dokploy's **+ Create service → template**, which gives each of them its own Docker Compose stack. The chain being built is:
+
+```
+Grafana  ──asks──▶  Prometheus  ──reads──▶  backend:9090/metrics
+```
+
+The templates get the software running. Four things still have to be done by hand, because a template cannot know about your backend:
+
+| Step | Why |
+| --- | --- |
+| Redeploy the `backend` service | The image that is running predates the metrics endpoint, so there is nothing to scrape yet |
+| Paste `monitoring/dokploy/prometheus.compose.yml` into the Prometheus service | Adds the shared network, and drops the template's `--web.enable-lifecycle` |
+| Paste `monitoring/dokploy/grafana.compose.yml` into the Grafana service | Adds the shared network, the admin password and the public URL |
+| Replace the content of the `prometheus.yml` **File Mount** | The template's default config scrapes Prometheus itself only; this adds the backend job |
+
+**Why the network block matters.** The templates create each service as an isolated stack, so by default Prometheus cannot see the backend (a Dokploy Application, i.e. a Swarm service) and Grafana cannot see Prometheus. Both committed compose files add `dokploy-network` — the network Traefik already uses to reach your applications — which makes all three mutually resolvable **without publishing a single port**.
+
+**The one line that must be edited.** Dokploy names Swarm services with a generated suffix, so the backend's real name has to come from the server:
+
+```bash
+docker service ls
+```
+
+Then, in the Prometheus service's **Advanced → Mounts → `prometheus.yml`**, replace the content with `monitoring/prometheus.yml` and set:
+
+```yaml
+      - targets: ["<backend-swarm-service-name>:9090"]
+```
+
+**⚠️ Delete the Prometheus domain.** The Prometheus template declares a public domain on port 9090, and Prometheus has no authentication of its own — that address would let anyone read your route names, latency and cache behaviour. Prometheus service → **Domains** → delete it. Grafana is the UI; Prometheus only needs to be reachable by the other containers. The committed compose also removes `--web.enable-lifecycle`, which the template turns on: that flag exposes `/-/reload` and `/-/quit` over HTTP, so a public domain plus that flag is a remote shutdown switch.
+
+**Then in Grafana** (open its domain and sign in as `admin` with the password from the compose file):
+
+1. **Connections → Data sources → Add data source → Prometheus**, URL `http://prometheus:9090`, then **Save & test**.
+   If that name does not resolve, Docker deployed that service as a Stack rather than a Compose project — use the Prometheus container name from `docker ps --format '{{.Names}}'` instead.
+2. **Dashboards → New → Import → Upload JSON file** → `monitoring/dashboards/nexton-api.json`.
+
+Optionally turn on **Advanced → Security → Basic Auth** on the Grafana service as a second lock in front of the login page.
+
+**Provisioning as code instead of clicking.** `monitoring/grafana-datasource.yml`, `monitoring/grafana-dashboards.yml` and `monitoring/dashboards/nexton-api.json` are the file-based equivalent of steps 1 and 2, for when doing it through the UI becomes tedious. Each header names the mount path it needs; the datasource must keep uid `prometheus`, because the dashboard refers to it.
+
+**What the templates already give you**, so that it does not need adding: the volumes `prometheus-data` (`/prometheus`) and `grafana-storage` (`/var/lib/grafana`), the `prometheus.yml` File Mount, and the Grafana domain. The images are `prom/prometheus:latest` and `grafana/grafana-enterprise:12.4`; Enterprise runs unlicensed as an OSS equivalent, so it is fine to keep — swap it for `grafana/grafana:12.4` if you would rather not see features you have not licensed.
+
+### 6. Verifying the monitoring stack
+
+1. **The backend serves metrics inside its container network:**
+   ```bash
+   docker ps --format '{{.Names}}'                                   # find the backend container
+   docker exec <backend-container> wget -qO- http://127.0.0.1:9090/metrics | head -20
+   ```
+   If that fails, `METRICS_ADDR` did not reach the container. The image sets it to `:9090`, so a failure here means an override is blanking it.
+2. **The three services share a network:**
+   ```bash
+   docker network inspect dokploy-network | grep -iE "nexton|prometheus|grafana"
+   ```
+   All three should appear. A missing one is why a scrape target or the datasource would fail to resolve.
+3. **Prometheus → Status → Targets** should show the backend target as **UP**. **Status → Configuration** shows the config it actually loaded, which is the quickest way to confirm the File Mount content landed rather than being silently empty. A **DOWN** target with a good config means the target name is wrong, and the error message names it.
+4. **Grafana** should open **Nexton / Nexton API** with data. The **Scrape target** panel turns green when the scrape works. If every panel is empty while the target is up, the datasource URL — or its uid — is the thing to check.
+5. **Generate traffic** (`GET /api/discover`) and watch `nexton_http_requests_total` move. A `status="304"` series appearing confirms the ETag path is being exercised by the client, which is the behaviour the caching work depends on.
+
+**Useful queries** (Grafana Explore, or Prometheus):
+
+```promql
+# requests per second by route
+sum by (route) (rate(nexton_http_requests_total[5m]))
+
+# outbound TMDB calls per inbound request, by route
+sum by (route) (rate(nexton_route_tmdb_calls_total[5m]))
+  / (sum by (route) (rate(nexton_http_requests_total[5m])) > 0)
+
+# p95 latency by route
+histogram_quantile(0.95, sum by (route, le) (rate(nexton_http_request_duration_seconds_bucket[5m])))
+
+# share of requests answered with a cheap 304
+sum(rate(nexton_http_requests_total{status="304"}[5m]))
+  / clamp_min(sum(rate(nexton_http_requests_total[5m])), 1)
+
+# anything wrong with Redis at all (should be flat zero)
+rate(nexton_redis_errors_total[5m])
+```
+
+**Alerts worth adding** in Grafana (Alerting → Alert rules, delivered through a contact point such as Discord or Telegram — Dokploy's own notifications only cover server thresholds, not request health):
+
+- `up{job="nexton-backend"} == 0` for 5m — the scrape is failing
+- `increase(nexton_redis_errors_total[10m]) > 0` — requests are being served without the second-level cache
+- p95 latency above ~2s for 10m — outbound calls are the usual cause
+- a 5xx ratio above a few percent for 5m
+
+**Not included, and the natural next step:** `redis_exporter` for Redis server-side memory, connections and keyspace, and `node_exporter` if you want host CPU, RAM and disk on the same dashboard.
 
 ---
 

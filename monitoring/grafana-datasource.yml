@@ -1,0 +1,36 @@
+# Grafana datasource provisioning — OPTIONAL.
+#
+# Only needed if you would rather provision the datasource as code than add it
+# in the UI. The short path needs no file at all:
+#
+#   Connections -> Data sources -> Add data source -> Prometheus
+#   URL: http://prometheus:9090        then Save & test
+#
+# If you do use this file, mount it at
+# /etc/grafana/provisioning/datasources/prometheus.yml
+#
+# The uid is pinned on purpose. The committed dashboard in
+# monitoring/dashboards/nexton-api.json refers to datasource uid "prometheus",
+# so provisioning it here makes the dashboard work on first load with no
+# import-time prompt. A datasource created by hand must be given uid
+# "prometheus" too (Grafana allows that in the datasource's own settings),
+# otherwise every panel reports "Datasource prometheus was not found".
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # `prometheus` is the compose service name, reachable because both template
+    # stacks join dokploy-network — see monitoring/dokploy/*.compose.yml. If the
+    # name does not resolve, Docker deployed that service as a Stack rather than
+    # a Compose project; the real name is in `docker ps --format '{{.Names}}'`.
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Tells Grafana's query builder the scrape interval so $__rate_interval
+      # and the "rate" macros line up with the actual resolution.
+      timeInterval: 15s
+      httpMethod: POST

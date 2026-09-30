@@ -1,0 +1,40 @@
+# Grafana as created by Dokploy's "+ Create service" template, with the
+# environment and networking it needs. Paste this into the Grafana service's
+# compose editor in Dokploy.
+#
+# The template ships no environment at all, which leaves two gaps: the admin
+# account stays on its default password, and nothing tells Grafana which public
+# URL to build its links from.
+#
+# Two notes on the image: grafana/grafana-enterprise is free to run without a
+# licence and behaves exactly like the OSS image for dashboards, datasources and
+# alerting, so it is fine to keep — switch to grafana/grafana:12.4 if you would
+# rather not see Enterprise features you have not licensed.
+#
+# dokploy-network is added for the same reason as in prometheus.compose.yml: the
+# template isolates this stack, and without a shared network Grafana cannot
+# reach Prometheus at http://prometheus:9090.
+
+services:
+  grafana:
+    image: grafana/grafana-enterprise:12.4
+    restart: unless-stopped
+    environment:
+      # REPLACE THIS. Grafana's default admin/admin is all that stands between
+      # the public domain the template created and your metrics.
+      - GF_SECURITY_ADMIN_PASSWORD=REPLACE-WITH-A-STRONG-PASSWORD
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # REPLACE THIS with the Grafana domain from the service's Domains tab.
+      - GF_SERVER_ROOT_URL=https://REPLACE-WITH-YOUR-GRAFANA-DOMAIN
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    networks:
+      - dokploy-network
+
+volumes:
+  grafana-storage: {}
+
+networks:
+  dokploy-network:
+    external: true
