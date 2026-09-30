@@ -81,9 +81,18 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 		}
 	} else {
 		detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d", mediaType, id)
+		// `append_to_response` only appends resources from the same namespace,
+		// and the certification resource differs by media type: movies carry
+		// theirs on `release_dates`, TV on `content_ratings`. Appending the
+		// wrong one is silently ignored by TMDB rather than an error, so this
+		// split is a correctness choice, not error avoidance.
+		appendTo := "credits,images,videos,external_ids,recommendations,release_dates"
+		if mediaType == "tv" {
+			appendTo = "credits,images,videos,external_ids,recommendations,content_ratings"
+		}
 		var response tmdbMediaDetailsResponse
 		if err := tmdbGetWithParams(detailsURL, apiKey, map[string]string{
-			"append_to_response":     "credits,images,videos,external_ids",
+			"append_to_response":     appendTo,
 			"include_image_language": "en,null",
 		}, &response, scope); err != nil {
 			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
@@ -138,11 +147,105 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			if len(response.Networks) > 0 {
 				detailsVal.Network = response.Networks[0].Name
 			}
+			detailsVal.Certification = extractCertification(mediaType, response)
+			// A movie with no franchise comes back with an all-zero object
+			// rather than null, so the id is what decides.
+			if collection := response.BelongsToCollection; collection != nil && collection.ID != 0 {
+				detailsVal.Collection = collection
+			}
+			detailsVal.Recommendations = relatedForDetails(mediaType, id, response, scope)
 			details = &detailsVal
 		}
 	}
 
 	c.JSON(http.StatusOK, details)
+}
+
+const (
+	// relatedMediaLimit caps the "related" row on the detail screen. The row
+	// scrolls horizontally and recycles, so more than a dozen entries are never
+	// seen, and every extra one inflates a payload the client caches.
+	relatedMediaLimit = 12
+
+	// collectionPartsLimit caps a franchise row. Saga collections can run to
+	// dozens of films; this bounds the payload while still covering every
+	// realistic franchise within a screen or two of scrolling.
+	collectionPartsLimit = 30
+)
+
+// relatedForDetails builds the detail screen's related row.
+//
+// `recommendations` is already appended to the details request, so the common
+// path costs no extra TMDB call. `similar` is fetched only when that list trims
+// away to nothing — an obscure title, or one TMDB has no recommendations for —
+// which keeps the fallback rather than showing an empty row.
+//
+// Ratings are enriched afterwards so the row's cards draw the same IMDb /
+// Metascore / Rotten Tomatoes badges as the Discover carousels.
+func relatedForDetails(mediaType string, id int64, response tmdbMediaDetailsResponse, scope *callScope) []TMDBMedia {
+	items := relatedMedia(response.Recommendations.Results, mediaType, id, relatedMediaLimit)
+	if len(items) == 0 {
+		similarURL := fmt.Sprintf("https://api.themoviedb.org/3/%s/%d/similar", mediaType, id)
+		var similar tmdbRecommendationsResponse
+		if err := tmdbGet(similarURL, os.Getenv("TMDB_API_KEY"), &similar, scope); err == nil {
+			items = relatedMedia(similar.Results, mediaType, id, relatedMediaLimit)
+		}
+	}
+	enrichMediaRatings(items, scope)
+	return items
+}
+
+// handleCollectionDetails serves a franchise's films for the detail screen's
+// collection row.
+//
+// Separate from the details payload on purpose: building it costs a second TMDB
+// call, and the row sits below the fold, so the client asks for it only when a
+// movie reports a collection. The call itself is shared-cached in the TMDB
+// response cache, so a popular franchise is fetched once per 30 minutes.
+func handleCollectionDetails(c *gin.Context) {
+	collectionID, err := parseID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid collection id"})
+		return
+	}
+
+	apiKey := os.Getenv("TMDB_API_KEY")
+	scope := scopeFrom(c)
+	var collection *CollectionDetails
+
+	if apiKey == "dummy" {
+		var ok bool
+		collection, ok = getMockCollectionDetails(collectionID)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Collection not found in mock"})
+			return
+		}
+	} else {
+		collectionURL := fmt.Sprintf("https://api.themoviedb.org/3/collection/%d", collectionID)
+		var wire tmdbCollectionResponse
+		if err := tmdbGet(collectionURL, apiKey, &wire, scope); err != nil {
+			log.Printf("Error fetching TMDB collection %d: %v. Falling back to mock.", collectionID, err)
+			var ok bool
+			collection, ok = getMockCollectionDetails(collectionID)
+			if !ok {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch collection details"})
+				return
+			}
+		} else {
+			details := &CollectionDetails{
+				ID:           wire.ID,
+				Name:         wire.Name,
+				Overview:     wire.Overview,
+				PosterPath:   wire.PosterPath,
+				BackdropPath: wire.BackdropPath,
+				Parts:        trimCollectionParts(wire.Parts, collectionPartsLimit),
+			}
+			enrichMediaRatings(details.Parts, scope)
+			collection = details
+		}
+	}
+
+	c.JSON(http.StatusOK, collection)
 }
 
 func handleSeasonDetails(c *gin.Context) {

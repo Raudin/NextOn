@@ -14,7 +14,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 
 export default function AuthScreen() {
-  const router = useRouter();
+  const { replace } = useRouter();
   const { expired } = useLocalSearchParams<{ expired?: string }>();
   const { login, signup } = useAuth();
 
@@ -59,7 +59,7 @@ export default function AuthScreen() {
         await signup(trimmedEmail, password);
       }
       // Successful auth - navigate to Discover
-      router.replace("/(tabs)/discover");
+      replace("/(tabs)/discover");
     } catch (err: any) {
       setError(err.message || "Authentication failed. Please check your details.");
     } finally {
@@ -77,7 +77,7 @@ export default function AuthScreen() {
               size="$3"
               chromeless
               color="$color"
-              onPress={() => router.replace("/(tabs)/discover")}
+              onPress={() => replace("/(tabs)/discover")}
             >
               ← Skip to Browse
             </Button>
@@ -94,8 +94,7 @@ export default function AuthScreen() {
           </YStack>
 
           {/* Session Expired Notice */}
-          {isExpired && (
-            <YStack
+          {isExpired ? <YStack
               bg="$purple2"
               borderColor="$purple8"
               borderWidth={1}
@@ -109,8 +108,7 @@ export default function AuthScreen() {
               <Text color="$purple9" fos="$2" ta="center" fow="600">
                 Your session has expired. Please log in again.
               </Text>
-            </YStack>
-          )}
+            </YStack> : null}
 
           {/* Toggle Tab Row */}
           <XStack bg="$backgroundElement" p="$1" borderRadius="$5" mt="$3">
@@ -193,13 +191,11 @@ export default function AuthScreen() {
           </YStack>
 
           {/* Error Banner */}
-          {error && (
-            <YStack bg="rgba(255, 0, 0, 0.1)" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$4">
+          {error ? <YStack bg="rgba(255, 0, 0, 0.1)" borderColor="$red8" borderWidth={1} p="$3" borderRadius="$4">
               <Text color="$red10" fos="$2" fow="600" ta="center">
                 {error}
               </Text>
-            </YStack>
-          )}
+            </YStack> : null}
 
           {/* Submit Action */}
           <Button

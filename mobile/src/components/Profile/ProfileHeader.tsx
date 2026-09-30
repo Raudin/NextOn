@@ -140,8 +140,7 @@ export default function ProfileHeader({
         </YStack>
       </XStack>
 
-      {isEditing && (
-        <YStack
+      {isEditing ? <YStack
           w="100%"
           gap="$3"
           bg="$backgroundElement"
@@ -206,8 +205,7 @@ export default function ProfileHeader({
               {updating ? <Spinner color="white" size="small" /> : <Text color="white" fow="700">Save</Text>}
             </Button>
           </XStack>
-        </YStack>
-      )}
+        </YStack> : null}
     </YStack>
   );
 }

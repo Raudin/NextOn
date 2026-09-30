@@ -38,6 +38,7 @@ export default function WatchlistPosterCard({
       <YStack
         h={width * 1.48}
         borderRadius={18}
+        borderCurve="continuous"
         overflow="hidden"
         bg="$backgroundElement"
         position="relative"

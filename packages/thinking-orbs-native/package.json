@@ -17,7 +17,7 @@
     "react-native-reanimated": ">=3.0.0"
   },
   "dependencies": {
-    "thinking-orbs": "^0.3.1"
+    "thinking-orbs": "0.3.1"
   },
   "keywords": [
     "react-native",

@@ -1,9 +1,9 @@
 import React from "react";
-import { Image } from "expo-image";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 import { Spinner, Text, XStack, YStack } from "tamagui";
 
-import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
+import EpisodePoster from "./EpisodePoster";
+
 import {
   getCountdownString,
   posterPathOf,
@@ -23,6 +23,10 @@ import {
  * layout fix only has to be made once.
  */
 
+/** Poster size of a schedule row. */
+const POSTER_WIDTH = 60;
+const POSTER_HEIGHT = 90;
+
 interface ScheduleRowProps {
   posterPath?: string | null;
   title: string;
@@ -35,6 +39,11 @@ interface ScheduleRowProps {
   background?: string;
   /** Poster well colour, which contrasts against the row surface. */
   posterWellBackground?: string;
+  /**
+   * Aired-but-unwatched episodes, for the poster's count badge and stack.
+   * Only TV rows have one; movies and upcoming rows leave it undefined.
+   */
+  episodesRemaining?: number;
   /** Replaces the mark-watched ring on the right. */
   trailing?: React.ReactNode;
   marking?: boolean;
@@ -52,18 +61,18 @@ function ScheduleRow({
   onPress,
   background = "$background",
   posterWellBackground = "$backgroundElement",
+  episodesRemaining,
   trailing,
   marking = false,
   onMarkWatched,
   markDisabled = false,
 }: ScheduleRowProps) {
-  const posterUrl = posterPath ? imageUrl(posterPath, "posterCell") : null;
-
   return (
     <XStack
       gap="$3"
       p="$3"
       borderRadius="$4"
+      borderCurve="continuous"
       bg={background}
       borderWidth={1}
       borderColor="$borderColor"
@@ -73,30 +82,14 @@ function ScheduleRow({
       jc="space-between"
     >
       <XStack gap="$3" f={1} ai="center">
-        <YStack
-          w={60}
-          h={90}
-          borderRadius="$2"
-          overflow="hidden"
-          bg={posterWellBackground}
-        >
-          {posterUrl ? (
-            <Image
-              source={{ uri: posterUrl }}
-              style={styles.posterImage}
-              contentFit="cover"
-              cachePolicy={imageCachePolicy("posterCell")}
-              transition={imageTransitionMs("posterCell")}
-              recyclingKey={posterPath}
-            />
-          ) : (
-            <YStack f={1} ai="center" jc="center">
-              <Text color="$color" opacity={0.45} fos="$1" ta="center">
-                No art
-              </Text>
-            </YStack>
-          )}
-        </YStack>
+        <EpisodePoster
+          posterPath={posterPath}
+          episodesRemaining={episodesRemaining}
+          width={POSTER_WIDTH}
+          height={POSTER_HEIGHT}
+          wellBackground={posterWellBackground}
+          badgeRingColor={background}
+        />
 
         <YStack f={1} gap="$1" py="$1">
           <Text color={badgeColor} fow="bold" fos="$1" letterSpacing={0.5}>
@@ -117,18 +110,22 @@ function ScheduleRow({
       {trailing ??
         (onMarkWatched ? (
           /* Hollow ring "mark watched" control */
-          <TouchableOpacity
+          <Pressable
             onPress={(event) => {
               event.stopPropagation();
               onMarkWatched();
             }}
             disabled={markDisabled}
-            style={styles.checkmarkTouch}
+            style={({ pressed }) => [
+              styles.checkmarkTouch,
+              pressed && styles.pressed,
+            ]}
           >
             <YStack
               w={36}
               h={36}
               borderRadius={18}
+              borderCurve="continuous"
               borderWidth={2.5}
               borderColor="$borderColor"
               bg="transparent"
@@ -137,7 +134,7 @@ function ScheduleRow({
             >
               {marking ? <Spinner size="small" color="$color" /> : null}
             </YStack>
-          </TouchableOpacity>
+          </Pressable>
         ) : null)}
     </XStack>
   );
@@ -165,6 +162,7 @@ export function NewSeasonCard({
       gap="$3"
       p="$3.5"
       borderRadius="$4"
+      borderCurve="continuous"
       bg="$backgroundElement"
       borderWidth={1}
       borderColor="$orange8"
@@ -191,6 +189,7 @@ export function NewSeasonCard({
             detailsText={runtimeLabel(item)}
             subtitleText={item.episode.name}
             onPress={() => onOpen(item)}
+            episodesRemaining={item.episodesRemaining}
             marking={markingId === item.id}
             markDisabled={markingId !== null}
             onMarkWatched={() => onMarkWatched(item)}
@@ -218,6 +217,7 @@ export function ReadyCard({
       gap="$3"
       p="$3.5"
       borderRadius="$4"
+      borderCurve="continuous"
       bg="$backgroundElement"
       borderWidth={1}
       borderColor="$borderColor"
@@ -241,6 +241,8 @@ export function ReadyCard({
               item.isTv ? item.episode.name : item.details?.tagline || "Released"
             }
             onPress={() => onOpen(item)}
+            // Movies have no backlog, so only TV rows carry a count.
+            episodesRemaining={item.isTv ? item.episodesRemaining : undefined}
             marking={markingId === item.id}
             markDisabled={markingId !== null}
             onMarkWatched={() => onMarkWatched(item)}
@@ -334,13 +336,18 @@ export function UpcomingGroup({
 }
 
 const styles = StyleSheet.create({
-  posterImage: {
-    width: "100%",
-    height: "100%",
-  },
   checkmarkTouch: {
     padding: 6,
     alignItems: "center",
     justifyContent: "center",
+  },
+  /**
+   * Press feedback replacing TouchableOpacity's `activeOpacity`. A gentler fade
+   * than the legacy default of 0.2, which nearly erased the hollow ring.
+   * `disabled` suppresses this automatically, since a disabled Pressable never
+   * reports `pressed`.
+   */
+  pressed: {
+    opacity: 0.6,
   },
 });

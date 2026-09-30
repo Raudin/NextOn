@@ -34,10 +34,9 @@ export default function WatchProgressBadge({
       bg={surface}
       borderWidth={1}
       borderColor={borderTone}
-      shadowColor="#000"
-      shadowOpacity={0.3}
-      shadowRadius={8}
-      shadowOffset={{ width: 0, height: 4 }}
+      // CSS box-shadow syntax replacing the legacy shadow* props plus Android
+      // `elevation`, which had to be kept in step with them by hand.
+      style={{ boxShadow: "0 4px 8px rgba(0, 0, 0, 0.3)" }}
     >
       <ProgressRing progress={progress} size={SIZE} strokeWidth={STROKE_WIDTH} />
     </YStack>

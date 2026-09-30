@@ -7,22 +7,34 @@ import { setTelemetryScreen } from "@/lib/telemetry";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Calendar, Check, Clapperboard, Heart, Lock, Plus } from "lucide-react-native";
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clapperboard,
+  Heart,
+  Lock,
+  Plus,
+} from "lucide-react-native";
 import {
   Linking,
+  Platform,
+  Pressable,
   StyleSheet,
-  TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Button, ScrollView, Spinner, Text, useTheme, XStack, YStack } from "tamagui";
 
+import MediaCarousel from "@/components/Discover/MediaCarousel";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useConfirmDialog } from "@/components/ui/use-confirm-dialog";
 
 import {
   addToFavorites,
   addToWatchlist,
+  fetchCollection,
   fetchFavoriteStatus,
   fetchMediaDetails,
   fetchSeasonEpisodes,
@@ -35,9 +47,11 @@ import {
   removeFromWatchlist,
   unmarkWatched,
   unmarkWatchedBulk,
+  type CollectionDetails,
   type Episode,
   type MediaDetails,
   type Season,
+  type TMDBMedia,
   type TvProgress,
 } from "@/lib/media-api";
 import BackButton from "@/components/BackButton";
@@ -47,7 +61,16 @@ import MediaToggleBadge from "@/components/MediaToggleBadge";
 import WatchProgressBar from "@/components/Watchlist/WatchProgressBar";
 
 export default function MediaDetailScreen() {
-  const router = useRouter();
+  const { back, push } = useRouter();
+  const insets = useSafeAreaInsets();
+  /**
+   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
+   * the status-bar inset is applied as padding there. On iOS the scroll view
+   * handles it and this stays 0, which is what lets the hero scroll under the
+   * status bar rather than being clipped below it. Same pattern as
+   * `(tabs)/profile.tsx`.
+   */
+  const topInset = Platform.OS === "android" ? insets.top : 0;
   const { token } = useAuth();
   const params = useLocalSearchParams<{ type: string; id: string }>();
   const [details, setDetails] = useState<MediaDetails | null>(null);
@@ -59,6 +82,20 @@ export default function MediaDetailScreen() {
   const [watchedLoading, setWatchedLoading] = useState(false);
   const [favorited, setFavorited] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
+  /**
+   * Watchlist membership as a set of ids, rather than the single boolean the
+   * hero needs: the related and collection rows render list cards whose
+   * bookmark buttons each need their own state. Filled from the same
+   * `fetchWatchlist` call the hero already makes, so the rows cost no extra
+   * request.
+   */
+  const [watchlistIds, setWatchlistIds] = useState<Set<number>>(new Set());
+  /**
+   * The franchise's films, for the collection row. Only ever fetched when the
+   * details report a `collection`, and kept with the id it was loaded for so a
+   * response for a previously-opened title cannot render under the current one.
+   */
+  const [collection, setCollection] = useState<CollectionDetails | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "episodes">(
     "overview",
   );
@@ -185,6 +222,7 @@ export default function MediaDetailScreen() {
           ]);
         setDetails(detailsData);
         setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
+        setWatchlistIds(new Set(watchlist.map((item) => item.id)));
         setFavorited(favoriteStatus.favorited ?? false);
         setTvProgress(watchedStatus.tv_progress ?? null);
         if (isMovie) {
@@ -200,6 +238,7 @@ export default function MediaDetailScreen() {
         const detailsData = await fetchMediaDetails(params.type, params.id);
         setDetails(detailsData);
         setInWatchlist(false);
+        setWatchlistIds(new Set());
         setWatched(false);
         setFavorited(false);
         setWatchedEpisodes(new Set());
@@ -270,6 +309,99 @@ export default function MediaDetailScreen() {
     loadAll();
   }, [loadAll, token]);
 
+  /**
+   * Loads the franchise's films, once the details report one.
+   *
+   * Keyed on the collection id rather than on `details`, so the request does not
+   * repeat every time anything else about the title changes (a watched toggle
+   * replaces the details object) while still refetching when the title belongs
+   * to a different franchise.
+   *
+   * A failure is swallowed on purpose: the row is decoration, and replacing the
+   * page with an error over it would be far worse than a missing row.
+   */
+  const collectionId = details?.collection?.id ?? null;
+  useEffect(() => {
+    if (collectionId === null) {
+      return;
+    }
+    let cancelled = false;
+    fetchCollection(collectionId)
+      .then((data) => {
+        if (!cancelled) {
+          setCollection(data);
+        }
+      })
+      .catch(() => {
+        // Leave the row hidden.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionId]);
+
+  /** Opens a card from the collection or related rows. */
+  const openRelated = useCallback(
+    (item: TMDBMedia) => {
+      // The same resolution the Discover grid uses: TMDB ids are per-namespace,
+      // so an item that arrives without a media type must not be guessed as a
+      // movie — that would open a completely different title.
+      const type = item.media_type || (item.title ? "movie" : "tv");
+      push({
+        pathname: "/media/[type]/[id]",
+        params: { type, id: String(item.id) },
+      } as any);
+    },
+    [push],
+  );
+
+  /**
+   * Watchlist toggle for a card in the collection or related rows.
+   *
+   * Optimistic, like the hero's button, but it deliberately avoids the screen's
+   * `error` state: a failed bookmark on a card several rows down would replace
+   * the whole page with an error message. The optimistic change is rolled back
+   * and the failure logged instead.
+   */
+  const toggleRelatedWatchlist = useCallback(
+    async (item: TMDBMedia) => {
+      if (!token) {
+        push("/auth");
+        return;
+      }
+      const wasAdded = watchlistIds.has(item.id);
+      const setMembership = (added: boolean) =>
+        setWatchlistIds((prev) => {
+          const next = new Set(prev);
+          if (added) {
+            next.add(item.id);
+          } else {
+            next.delete(item.id);
+          }
+          return next;
+        });
+
+      setMembership(!wasAdded);
+      try {
+        if (wasAdded) {
+          await removeFromWatchlist(item.id);
+        } else {
+          await addToWatchlist(item);
+        }
+        await invalidateMediaCaches();
+      } catch (err) {
+        setMembership(wasAdded);
+        if (__DEV__) {
+          console.warn(
+            "[media-detail] watchlist toggle failed for a row card:",
+            err,
+          );
+        }
+      }
+    },
+    [push, token, watchlistIds],
+  );
+
   const toggleSeason = useCallback(
     async (seasonNumber: number) => {
       setExpandedSeasons((prev) => {
@@ -308,7 +440,7 @@ export default function MediaDetailScreen() {
 
   const toggleWatchlist = async () => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (!details || watchlistLoading) {
@@ -334,7 +466,7 @@ export default function MediaDetailScreen() {
 
   const toggleWatched = async () => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (!details || !isMovie || watchedLoading) {
@@ -360,7 +492,7 @@ export default function MediaDetailScreen() {
 
   const toggleFavorite = async () => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (!details || favoriteLoading) {
@@ -454,7 +586,7 @@ export default function MediaDetailScreen() {
 
   const handleWatchlistButtonPress = async () => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (watchlistLoading || watchedLoading) return;
@@ -507,7 +639,7 @@ export default function MediaDetailScreen() {
     seasonEpisodesList: Episode[],
   ) => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (!details) {
@@ -617,7 +749,7 @@ export default function MediaDetailScreen() {
   };
 
   const openEpisode = (episode: Episode) => {
-    router.push({
+    push({
       pathname: "/media/[type]/[id]/episode/[season]/[episode]",
       params: {
         type: params.type,
@@ -640,9 +772,16 @@ export default function MediaDetailScreen() {
     return "rgba(255,255,255,0.15)";
   }, [details]);
 
+  /**
+   * Whether the meta row leads with an age-rating badge. It also drives the
+   * separators: with a badge in front, the first genre needs a dot before it
+   * like every other item does.
+   */
+  const hasCertification = Boolean(details?.certification);
+
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <YStack f={1} pt={topInset}>
         {showLoadingUI ? (
           <LoadingOrb label="Loading details..." />
         ) : error ? (
@@ -650,11 +789,15 @@ export default function MediaDetailScreen() {
             <Text color="$red10" fow="700" ta="center">
               {error}
             </Text>
-            <Button onPress={() => router.back()}>Back</Button>
+            <Button onPress={() => back()}>Back</Button>
           </YStack>
         ) : details ? (
           <ScrollView
             showsVerticalScrollIndicator={false}
+            // Replaces the SafeAreaView wrapper: iOS insets the scroll content
+            // around the status bar natively, so the hero can also scroll
+            // *under* it instead of being clipped below it.
+            contentInsetAdjustmentBehavior="automatic"
             contentContainerStyle={{ paddingBottom: 120 }}
           >
             {/* Hero Poster */}
@@ -693,7 +836,7 @@ export default function MediaDetailScreen() {
               >
                 <YStack gap="$3" w="100%" ai="center">
                   <XStack w="100%" jc="space-between" ai="center">
-                    <BackButton onPress={() => router.back()} />
+                    <BackButton onPress={() => back()} />
 
                     {trailer ? (
                       <HeroIconButton
@@ -923,30 +1066,52 @@ export default function MediaDetailScreen() {
             </YStack>
 
             {/*
-              Genres, runtime and provider, on the page background rather than
-              over the artwork. One wrapping row; the text follows the theme
-              colour because the hardcoded white it used over the backdrop would
-              be invisible on a light page.
+              Certification, genres, runtime and provider, on the page
+              background rather than over the artwork. One wrapping row; the text
+              follows the theme colour because the hardcoded white it used over
+              the backdrop would be invisible on a light page.
 
-              Ratings are deliberately absent here: the cards the user arrived
-              from (Discover, search, watchlist) already carry them, so showing
-              them again on the detail page was noise.
+              The OMDb score badges (IMDb, Metascore, Rotten Tomatoes) are still
+              deliberately absent: the cards the user arrived from (Discover,
+              search, watchlist) already carry them, so repeating them here was
+              noise. The age rating is a different thing — it belongs nowhere
+              else in the app, and it is what tells you whether the title is
+              something you can watch with the kids.
             */}
             {(details.genres ?? []).length > 0 ||
             runtime ||
+            hasCertification ||
             (isTv && details.network) ? (
               <XStack ai="center" gap="$2" flexWrap="wrap" mt="$4" mx="$4">
+                {/*
+                  Certification leads the row because it describes the whole
+                  title rather than one of its facets, and it gets a hairline box
+                  instead of a dot separator: a bare "PG-13" sitting between two
+                  dots reads as just another genre.
+                */}
+                {details.certification ? (
+                  <XStack
+                    px="$2"
+                    py={1}
+                    borderRadius="$2"
+                    borderWidth={1}
+                    borderColor="$borderColor"
+                    bg="$backgroundElement"
+                  >
+                    <Text color="$color" opacity={0.85} fow="800" fos="$2">
+                      {details.certification}
+                    </Text>
+                  </XStack>
+                ) : null}
                 {(details.genres ?? []).map((genre, i) => (
                   <XStack key={genre.id} ai="center" gap="$2">
-                    {i > 0 && (
-                      <YStack
+                    {(i > 0 || hasCertification) ? <YStack
                         w={3}
                         h={3}
                         borderRadius={999}
                         bg="$color"
                         opacity={0.35}
-                      />
-                    )}
+                      /> : null}
                     <Text color="$color" opacity={0.75} fow="500" fos="$3">
                       {genre.name}
                     </Text>
@@ -954,15 +1119,13 @@ export default function MediaDetailScreen() {
                 ))}
                 {runtime ? (
                   <XStack ai="center" gap="$2">
-                    {(details.genres ?? []).length > 0 && (
-                      <YStack
+                    {((details.genres ?? []).length > 0 || hasCertification) ? <YStack
                         w={3}
                         h={3}
                         borderRadius={999}
                         bg="$color"
                         opacity={0.35}
-                      />
-                    )}
+                      /> : null}
                     <Text color="$color" opacity={0.75} fow="500" fos="$3">
                       {runtime}
                     </Text>
@@ -970,15 +1133,15 @@ export default function MediaDetailScreen() {
                 ) : null}
                 {isTv && details.network ? (
                   <XStack ai="center" gap="$2">
-                    {((details.genres ?? []).length > 0 || runtime) && (
-                      <YStack
+                    {((details.genres ?? []).length > 0 ||
+                      runtime ||
+                      hasCertification) ? <YStack
                         w={3}
                         h={3}
                         borderRadius={999}
                         bg="$color"
                         opacity={0.35}
-                      />
-                    )}
+                      /> : null}
                     <Text color="$color" opacity={0.75} fow="500" fos="$3">
                       {details.network}
                     </Text>
@@ -988,8 +1151,7 @@ export default function MediaDetailScreen() {
             ) : null}
 
             {/* TV Tab Switcher */}
-            {isTv && (
-              <XStack
+            {isTv ? <XStack
                 mt="$4"
                 mx="$4"
                 bg="$backgroundElement"
@@ -1016,8 +1178,7 @@ export default function MediaDetailScreen() {
                 >
                   Episodes
                 </Button>
-              </XStack>
-            )}
+              </XStack> : null}
 
             {isTv && activeTab === "episodes" ? (
               <YStack px="$4" pt="$5" gap="$4">
@@ -1092,7 +1253,7 @@ export default function MediaDetailScreen() {
                     >
                       <XStack gap="$4">
                         {(details.cast ?? []).map((member) => (
-                          <YStack key={member.id} w={92} ai="center" gap="$2">
+                          <YStack key={member.id} w={100} ai="center" gap="$2">
                             <YStack
                               w={76}
                               h={76}
@@ -1119,26 +1280,78 @@ export default function MediaDetailScreen() {
                                 </YStack>
                               )}
                             </YStack>
-                            <Text
-                              color="$color"
-                              fow="700"
-                              fos="$2"
-                              ta="center"
-                              numberOfLines={2}
-                            >
-                              {member.name}
-                            </Text>
+                            <YStack ai="center" gap={2}>
+                              <Text
+                                color="$color"
+                                fow="700"
+                                fos="$2"
+                                ta="center"
+                                numberOfLines={2}
+                              >
+                                {member.name}
+                              </Text>
+                              {/*
+                                The role, under the actor. Without it the row is a
+                                list of names with no indication of who played
+                                whom — the single most useful thing to know here.
+                                Capped at two lines like the name, so a long
+                                character ("Tyrion 'The Halfman' Lannister") does
+                                not stretch one cell past its neighbours.
+                              */}
+                              {member.character ? (
+                                <Text
+                                  color="$color"
+                                  opacity={0.5}
+                                  fos="$1"
+                                  ta="center"
+                                  numberOfLines={2}
+                                >
+                                  {member.character}
+                                </Text>
+                              ) : null}
+                            </YStack>
                           </YStack>
                         ))}
                       </XStack>
                     </ScrollView>
                   )}
                 </YStack>
+
+                {/*
+                  Franchise, then related titles. Both reuse the Discover
+                  carousel — a horizontal FlashList of MediaCards — so every row
+                  in the app behaves identically: recycled cells, the same poster
+                  sizes, and a working watchlist button.
+
+                  The collection row exists only for movies that TMDB files under
+                  a franchise (it does not model collections for TV), and only
+                  once its parts have arrived; the related row renders straight
+                  from the details payload.
+                */}
+                {collection && collection.id === details.collection?.id ? (
+                  <MediaCarousel
+                    title={collection.name}
+                    items={collection.parts}
+                    watchlistIds={watchlistIds}
+                    onOpen={openRelated}
+                    onToggle={toggleRelatedWatchlist}
+                  />
+                ) : null}
+
+                {(details.recommendations ?? []).length > 0 ? (
+                  <MediaCarousel
+                    title={isMovie ? "Related Movies" : "Related Shows"}
+                    items={details.recommendations ?? []}
+                    watchlistIds={watchlistIds}
+                    onOpen={openRelated}
+                    onToggle={toggleRelatedWatchlist}
+                  />
+                ) : null}
               </YStack>
             )}
           </ScrollView>
         ) : null}
-      </SafeAreaView>
+      </YStack>
 
       {/* Sibling of the scroll view, and rendered whether or not details have
           loaded, so the dialog is never unmounted out from under itself. */}
@@ -1160,11 +1373,9 @@ const styles = StyleSheet.create({
   },
   // Translucent, always-legible action buttons that sit on top of the backdrop.
   actionButtonShadow: {
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.45,
-    shadowRadius: 8,
-    elevation: 6,
+    // CSS box-shadow syntax replacing the legacy shadow* props plus Android
+    // `elevation`, which had to be kept in step with them by hand.
+    boxShadow: "0 3px 8px rgba(0, 0, 0, 0.45)",
   },
   // The watch bar's caption and the countdown sit directly on the artwork with
   // no pill behind them, so they get the same shadow treatment as hero copy.
@@ -1174,11 +1385,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
   },
   episodeThumb: {
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 4,
+    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.35)",
   },
   logoImage: {
     width: 220,
@@ -1189,6 +1396,24 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.8)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
+  },
+  /**
+   * Episode row's circular "seen" toggle, replacing the TouchableOpacity that
+   * used to inline this geometry as an object literal on every render.
+   */
+  watchToggle: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  /** Unreleased episodes are dimmed and inert. */
+  watchToggleLocked: {
+    opacity: 0.4,
+  },
+  /** Press feedback replacing TouchableOpacity's `activeOpacity`. */
+  watchTogglePressed: {
+    opacity: 0.7,
   },
 });
 
@@ -1213,6 +1438,13 @@ function SeasonCard({
   onToggleEpisode: (episode: Episode, list: Episode[]) => void;
   onOpenEpisode: (episode: Episode) => void;
 }) {
+  /**
+   * Lucide takes a resolved colour rather than a Tamagui token, so the icon
+   * colour is read from the active theme here — the same way the episode screen
+   * resolves the colours for its own icons.
+   */
+  const theme = useTheme();
+
   return (
     <YStack
       bg="$backgroundElement"
@@ -1236,13 +1468,28 @@ function SeasonCard({
             {season.episode_count} episodes
           </Text>
         </YStack>
-        <Text color="$color" opacity={0.7} fos="$4">
-          {expanded ? "▲" : "▼"}
-        </Text>
+        {/*
+          Lucide chevrons rather than the ▲/▼ glyphs: those render as a
+          different shape and weight in every platform's fallback font, they
+          scale with the system font size instead of the layout, and they carry
+          no accessibility semantics.
+        */}
+        {expanded ? (
+          <ChevronUp
+            size={20}
+            color={theme.color?.val ?? "#000000"}
+            strokeWidth={2.6}
+          />
+        ) : (
+          <ChevronDown
+            size={20}
+            color={theme.color?.val ?? "#000000"}
+            strokeWidth={2.6}
+          />
+        )}
       </XStack>
 
-      {expanded && (
-        <YStack px="$3" pb="$3" gap="$0">
+      {expanded ? <YStack px="$3" pb="$3" gap="$0">
           {loading ? (
             <YStack py="$4" ai="center">
               <Spinner color="$color" />
@@ -1271,8 +1518,7 @@ function SeasonCard({
               );
             })
           )}
-        </YStack>
-      )}
+        </YStack> : null}
     </YStack>
   );
 }
@@ -1425,26 +1671,25 @@ function EpisodeRowListItem({
           })();
 
           return (
-            <TouchableOpacity
+            <Pressable
               onPress={(e) => {
                 if (epUnreleased) return;
                 e.stopPropagation();
                 onToggle();
               }}
-              activeOpacity={epUnreleased ? 1 : 0.7}
               hitSlop={8}
-              style={{
-                width: 40,
-                height: 40,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: epUnreleased ? 0.4 : 1,
-              }}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: epUnreleased, selected: watched }}
+              style={({ pressed }) => [
+                styles.watchToggle,
+                epUnreleased && styles.watchToggleLocked,
+                pressed && !epUnreleased && styles.watchTogglePressed,
+              ]}
             >
               <MediaToggleBadge
                 state={epUnreleased ? "locked" : watched ? "active" : "idle"}
               />
-            </TouchableOpacity>
+            </Pressable>
           );
         })()}
       </XStack>

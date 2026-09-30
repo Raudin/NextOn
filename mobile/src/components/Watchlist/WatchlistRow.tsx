@@ -32,6 +32,7 @@ export default function WatchlistRow({
       gap="$3"
       p="$2.5"
       borderRadius="$5"
+      borderCurve="continuous"
       bg="$backgroundElement"
       borderWidth={1}
       borderColor="rgba(255,255,255,0.06)"
@@ -43,6 +44,7 @@ export default function WatchlistRow({
         w={78}
         h={116}
         borderRadius={16}
+        borderCurve="continuous"
         overflow="hidden"
         bg="$background"
       >

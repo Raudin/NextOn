@@ -36,7 +36,7 @@ const SEARCH_GRID_GAP = 16;
 const SCREEN_PADDING_X = 18;
 
 export default function DiscoverScreen() {
-  const router = useRouter();
+  const { push } = useRouter();
   const { token } = useAuth();
   const { width } = useWindowDimensions();
   const [data, setData] = useState<DiscoverResponse | null>(null);
@@ -164,7 +164,7 @@ export default function DiscoverScreen() {
 
   const toggleWatchlist = async (item: TMDBMedia) => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     const exists = watchlistIds.has(item.id);
@@ -198,7 +198,7 @@ export default function DiscoverScreen() {
 
   const openDetails = (item: TMDBMedia) => {
     const type = item.media_type || (item.title ? "movie" : "tv");
-    router.push({
+    push({
       pathname: "/media/[type]/[id]",
       params: { type, id: String(item.id) },
     } as any);
@@ -236,8 +236,22 @@ export default function DiscoverScreen() {
 
   return (
     <YStack f={1} bg="$background">
+      {/*
+        The top safe inset is owned by this container rather than delegated to
+        `contentInsetAdjustmentBehavior` on the ScrollView below. The
+        `ui-safe-area-scroll` rule assumes the scroller is the screen's root
+        scroller; this screen deliberately pins the title and search field above
+        it, so the ScrollView can never be a direct child. See
+        `(tabs)/profile.tsx` for the migrated form.
+      */}
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <YStack f={1} px="$4">
+        <YStack
+          f={1}
+          px="$4"
+          // Required for the native tab bar's tap-to-scroll-to-top; see the
+          // native tabs guide on wrapping a ScrollView.
+          collapsable={false}
+        >
           <YStack mt="$2" mb="$3">
             <XStack ai="center" jc="space-between">
               <YStack f={1}>
@@ -245,9 +259,7 @@ export default function DiscoverScreen() {
                   <Text color="$color" fow="900" fos="$9">
                     Discover
                   </Text>
-                  {backgroundRefreshing && (
-                    <Spinner size="small" color="$color" opacity={0.6} />
-                  )}
+                  {backgroundRefreshing ? <Spinner size="small" color="$color" opacity={0.6} /> : null}
                 </XStack>
                 <Text color="$color" opacity={0.5} fos="$2">
                   Find your next favourite movie or show
@@ -282,18 +294,16 @@ export default function DiscoverScreen() {
             while the deferred flag is down they must agree, or the error or
             content branch would paint underneath the orb.
           */}
-          {showLoadingUI && <LoadingOrb label="Loading media..." />}
+          {showLoadingUI ? <LoadingOrb label="Loading media..." /> : null}
 
-          {!showLoadingUI && error && (
-            <YStack f={1} ai="center" jc="center" gap="$4">
+          {!showLoadingUI && error ? <YStack f={1} ai="center" jc="center" gap="$4">
               <Text color="$red10" fow="600" ta="center" fos="$4">
                 {error}
               </Text>
               <Button onPress={() => loadDiscover(true)} size="$4" borderRadius="$4">
                 Retry
               </Button>
-            </YStack>
-          )}
+            </YStack> : null}
 
           {!showLoadingUI && !error && (
             /**

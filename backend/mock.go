@@ -256,9 +256,10 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "movie",
 				ReleaseDate:  gladiatorDate,
 			},
-			Runtime:  148,
-			Overview: "Years after witnessing the death of Maximus, Lucius is forced to enter the Colosseum after his home is conquered by tyrannical emperors who now lead Rome.",
-			Genres:   []Genre{{ID: 28, Name: "Action"}, {ID: 12, Name: "Adventure"}, {ID: 18, Name: "Drama"}},
+			Runtime:       148,
+			Certification: "R",
+			Overview:      "Years after witnessing the death of Maximus, Lucius is forced to enter the Colosseum after his home is conquered by tyrannical emperors who now lead Rome.",
+			Genres:        []Genre{{ID: 28, Name: "Action"}, {ID: 12, Name: "Adventure"}, {ID: 18, Name: "Drama"}},
 			Cast: []CastMember{
 				{ID: 25072, Name: "Paul Mescal", ProfilePath: "/poKiP6PyjEbi0Cwl34qQJm5C6fB.jpg"},
 				{ID: 5292, Name: "Denzel Washington", ProfilePath: "/jj2Gcobpopokal0YstuCQW0ldJ4.jpg"},
@@ -275,9 +276,10 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "movie",
 				ReleaseDate:  sonicDate,
 			},
-			Runtime:  110,
-			Overview: "Sonic, Knuckles, and Tails reunite against a powerful new adversary, Shadow, whose abilities force them to seek an unlikely alliance.",
-			Genres:   []Genre{{ID: 28, Name: "Action"}, {ID: 35, Name: "Comedy"}, {ID: 10751, Name: "Family"}},
+			Runtime:       110,
+			Certification: "PG",
+			Overview:      "Sonic, Knuckles, and Tails reunite against a powerful new adversary, Shadow, whose abilities force them to seek an unlikely alliance.",
+			Genres:        []Genre{{ID: 28, Name: "Action"}, {ID: 35, Name: "Comedy"}, {ID: 10751, Name: "Family"}},
 			Cast: []CastMember{
 				{ID: 222121, Name: "Ben Schwartz", ProfilePath: "/5jVbHfxkLumu9Tcj0SwYv6sk5b5.jpg"},
 				{ID: 6384, Name: "Jim Carrey", ProfilePath: "/u0AqTz6Y7GHPCHINS01P7gPvDSb.jpg"},
@@ -294,6 +296,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "tv",
 				FirstAirDate: squidGameDate,
 			},
+			Certification:   "TV-MA",
 			EpisodeRunTime:  []int64{54},
 			NumberOfSeasons: 1,
 			Seasons: []Season{
@@ -319,9 +322,10 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "movie",
 				ReleaseDate:  wickedDate,
 			},
-			Runtime:  160,
-			Overview: "Elphaba, misunderstood because of her green skin, forms an unlikely friendship with Glinda before their lives take very different turns in Oz.",
-			Genres:   []Genre{{ID: 18, Name: "Drama"}, {ID: 14, Name: "Fantasy"}, {ID: 10749, Name: "Romance"}},
+			Runtime:       160,
+			Certification: "PG",
+			Overview:      "Elphaba, misunderstood because of her green skin, forms an unlikely friendship with Glinda before their lives take very different turns in Oz.",
+			Genres:        []Genre{{ID: 18, Name: "Drama"}, {ID: 14, Name: "Fantasy"}, {ID: 10749, Name: "Romance"}},
 			Cast: []CastMember{
 				{ID: 1746573, Name: "Cynthia Erivo", ProfilePath: "/7QzLA6rsML2rKXGIGcH9LwW5z6D.jpg"},
 				{ID: 226513, Name: "Ariana Grande", ProfilePath: "/r9Z7A0nD84m1xkFw7sR5B3V34N.jpg"},
@@ -338,6 +342,7 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "tv",
 				FirstAirDate: wednesdayDate,
 			},
+			Certification:   "TV-14",
 			EpisodeRunTime:  []int64{48},
 			NumberOfSeasons: 1,
 			Seasons: []Season{
@@ -363,9 +368,10 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 				MediaType:    "movie",
 				ReleaseDate:  insideOutDate,
 			},
-			Runtime:  97,
-			Overview: "Riley enters her teenage years, and Headquarters is suddenly disrupted by new emotions that complicate everything Joy thought she understood.",
-			Genres:   []Genre{{ID: 16, Name: "Animation"}, {ID: 10751, Name: "Family"}, {ID: 35, Name: "Comedy"}},
+			Runtime:       97,
+			Certification: "PG",
+			Overview:      "Riley enters her teenage years, and Headquarters is suddenly disrupted by new emotions that complicate everything Joy thought she understood.",
+			Genres:        []Genre{{ID: 16, Name: "Animation"}, {ID: 10751, Name: "Family"}, {ID: 35, Name: "Comedy"}},
 			Cast: []CastMember{
 				{ID: 56322, Name: "Amy Poehler", ProfilePath: "/hBJO9rVtO7SeC1FO8VBXMu5pM7v.jpg"},
 				{ID: 86122, Name: "Maya Hawke", ProfilePath: "/jGiaJCPK0Y3jK62Cu6WKhG6WnTj.jpg"},
@@ -374,9 +380,79 @@ func getMockMediaDetails(mediaType string, id int64) (*MediaDetails, bool) {
 		},
 	}
 
+	// Recommendations and the franchise are wired from the same catalogue rather
+	// than duplicated, so mock mode exercises the related and collection rows
+	// with artwork the rest of the mock data already uses.
+	catalog := func(ids ...int64) []TMDBMedia {
+		out := make([]TMDBMedia, 0, len(ids))
+		for _, id := range ids {
+			if item, ok := lookup[id]; ok {
+				out = append(out, item.TMDBMedia)
+			}
+		}
+		return out
+	}
+	if gladiator, ok := lookup[558449]; ok {
+		gladiator.Collection = &CollectionSummary{
+			ID:         mockGladiatorCollectionID,
+			Name:       "Gladiator Collection",
+			PosterPath: "/41RyTMtScaSYJ5ZHwOrkv3NJKEv.jpg",
+		}
+		gladiator.Recommendations = catalog(402431, 939243, 1022789)
+		lookup[558449] = gladiator
+	}
+	if sonic, ok := lookup[939243]; ok {
+		sonic.Recommendations = catalog(1022789, 558449)
+		lookup[939243] = sonic
+	}
+	if squidGame, ok := lookup[135397]; ok {
+		squidGame.Recommendations = catalog(119051)
+		lookup[135397] = squidGame
+	}
+
 	details, ok := lookup[id]
 	if !ok || details.MediaType != mediaType {
 		return nil, false
 	}
 	return &details, true
+}
+
+// mockGladiatorCollectionID is the real TMDB collection the mock Gladiator II
+// entry belongs to, so the details payload and the collection endpoint agree in
+// mock mode.
+const mockGladiatorCollectionID = 1069584
+
+// getMockCollectionDetails serves the one franchise the mock catalogue knows
+// about. Films are listed oldest first, matching what the real handler returns.
+func getMockCollectionDetails(collectionID int64) (*CollectionDetails, bool) {
+	if collectionID != mockGladiatorCollectionID {
+		return nil, false
+	}
+	return &CollectionDetails{
+		ID:           mockGladiatorCollectionID,
+		Name:         "Gladiator Collection",
+		Overview:     "The story of a Roman general's fight for revenge, and of the legacy it leaves behind.",
+		PosterPath:   "/41RyTMtScaSYJ5ZHwOrkv3NJKEv.jpg",
+		BackdropPath: "/j36t8sTYJfxH0WDsyqL0LF0eyDT.jpg",
+		Parts: []TMDBMedia{
+			{
+				ID:           98,
+				Title:        "Gladiator",
+				PosterPath:   "/wN2xWp1eIwCKOD0BHTcErTBv1Uq.jpg",
+				BackdropPath: "/Ar7QuJ7sJEiC0oP3I8fKBKIQD9u.jpg",
+				VoteAverage:  8.2,
+				MediaType:    "movie",
+				ReleaseDate:  "2000-05-04",
+			},
+			{
+				ID:           558449,
+				Title:        "Gladiator II",
+				PosterPath:   "/2cxhv044tcl7eVm26LsGs4886tq.jpg",
+				BackdropPath: "/3V4kDRpwBMj4NfbORkZIIjK2mIE.jpg",
+				VoteAverage:  6.8,
+				MediaType:    "movie",
+				ReleaseDate:  time.Now().AddDate(0, -2, 0).Format("2006-01-02"),
+			},
+		},
+	}, true
 }

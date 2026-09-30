@@ -6,15 +6,15 @@ import {
   List,
   type LucideIcon,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
-import {
-  Animated,
+import { useEffect } from "react";
+import { Pressable, StyleSheet, useColorScheme, View } from "react-native";
+import Animated, {
   Easing,
-  Pressable,
-  StyleSheet,
-  useColorScheme,
-  View,
-} from "react-native";
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { Text, YStack } from "tamagui";
 
 export type WatchlistLayoutMode = "posters" | "list";
@@ -105,18 +105,28 @@ export default function WatchlistMenu({
 }: WatchlistMenuProps) {
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
-  // Animation value is created once (lazy state init) so it can be read during
-  // render by the animated style without touching a ref.
-  const [progress] = useState(() => new Animated.Value(0));
+  /**
+   * Ground truth for the panel's transition: 0 = hidden, 1 = shown. Opacity,
+   * scale and offset are *derived* from it in `panelStyle` below — see the
+   * `state-ground-truth` rule — so a further property needs another
+   * interpolation rather than another animated value.
+   */
+  const shown = useSharedValue(0);
 
   useEffect(() => {
-    Animated.timing(progress, {
-      toValue: visible ? 1 : 0,
-      duration: visible ? 170 : 120,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [progress, visible]);
+    // The panel is only mounted while `visible`, so this only ever animates in;
+    // closing remains an immediate unmount, as it was before.
+    if (!visible) return;
+    shown.set(withTiming(1, { duration: 170, easing: Easing.out(Easing.cubic) }));
+  }, [shown, visible]);
+
+  const panelStyle = useAnimatedStyle(() => ({
+    opacity: shown.get(),
+    transform: [
+      { scale: interpolate(shown.get(), [0, 1], [0.94, 1]) },
+      { translateY: interpolate(shown.get(), [0, 1], [-6, 0]) },
+    ],
+  }));
 
   if (!visible) {
     return null;
@@ -145,28 +155,7 @@ export default function WatchlistMenu({
         accessibilityLabel="Close menu"
       />
 
-      <Animated.View
-        style={[
-          styles.panelWrap,
-          {
-            opacity: progress,
-            transform: [
-              {
-                scale: progress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.94, 1],
-                }),
-              },
-              {
-                translateY: progress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-6, 0],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
+      <Animated.View style={[styles.panelWrap, panelStyle]}>
         <View
           style={[
             styles.panel,
@@ -241,13 +230,13 @@ const styles = StyleSheet.create({
   },
   panel: {
     borderRadius: 18,
+    // iOS-only smoothing; ignored elsewhere. Softens the popover's corners.
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     padding: 6,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.38,
-    shadowRadius: 22,
-    elevation: 12,
+    // CSS box-shadow syntax replacing the legacy shadow* props plus Android
+    // `elevation`, which had to be kept in step with them by hand.
+    boxShadow: "0 10px 22px rgba(0, 0, 0, 0.38)",
   },
   row: {
     flexDirection: "row",

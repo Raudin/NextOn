@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { SyncProvider } from "@/context/SyncContext";
 import * as SplashScreen from "expo-splash-screen";
-import { useColorScheme } from "react-native";
+import { StyleSheet, useColorScheme } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { TamaguiProvider } from "tamagui";
 import config from "../constants/tamagui.config";
 
@@ -76,13 +77,33 @@ function ThemeAppContainer() {
 
 export default function TabLayout() {
   return (
-    <AuthProvider>
-      {/* SyncProvider sits inside AuthProvider because sync is
-          account-scoped: it must not run, and must not replay queued
-          mutations, while signed out. */}
-      <SyncProvider>
-        <ThemeAppContainer />
-      </SyncProvider>
-    </AuthProvider>
+    /**
+     * Gesture handler's root view must sit above everything that uses it —
+     * without it, gestures silently do not fire on Android. Nothing in the app
+     * consumes `react-native-gesture-handler` yet, so today this is a no-op;
+     * it is here because the animated press states (see `BackButton`,
+     * `HeroIconButton`, `WatchlistButton`) are being migrated from the RN
+     * `Animated` API to `GestureDetector` + Reanimated shared values, and that
+     * migration is inert without this wrapper.
+     *
+     * `flex: 1` is required: the root view is a plain View, so it does not
+     * stretch to the screen on its own and the whole app would collapse.
+     */
+    <GestureHandlerRootView style={styles.root}>
+      <AuthProvider>
+        {/* SyncProvider sits inside AuthProvider because sync is
+            account-scoped: it must not run, and must not replay queued
+            mutations, while signed out. */}
+        <SyncProvider>
+          <ThemeAppContainer />
+        </SyncProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+});

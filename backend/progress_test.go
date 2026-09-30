@@ -159,6 +159,91 @@ func TestResolveNextEpisodeReportsSeasonFinaleCount(t *testing.T) {
 	}
 }
 
+// farFuture stands in for an episode TMDB has scheduled but not aired. A literal
+// date keeps the test independent of when it runs.
+const farFuture = "2099-01-01"
+
+func TestResolveNextEpisodeCountsAiredBacklog(t *testing.T) {
+	seasons := []Season{season(1, 5)}
+	episodes := map[int64][]Episode{
+		1: {
+			episode(1, 1, "2020-01-01"),
+			episode(1, 2, "2020-01-08"),
+			episode(1, 3, "2020-01-15"),
+			episode(1, 4, "2020-01-22"),
+			episode(1, 5, farFuture),
+		},
+	}
+	// Only E1 has been watched, so three episodes have aired behind it: the
+	// badge must read 3 — the season's total of 5, or 4 counting the unaired
+	// E5, would both be wrong.
+	watched := []WatchedItem{watchedTV(21, 1, 1)}
+
+	result, err := resolveNextEpisode(21, seasons, "Returning Series", watched, stubFetcher(episodes, nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.found || result.episode.EpisodeNumber != 2 {
+		t.Fatalf("expected S1E2, got found=%v E%d", result.found, result.episode.EpisodeNumber)
+	}
+	if result.remaining != 3 {
+		t.Fatalf("expected 3 aired unwatched episodes, got %d", result.remaining)
+	}
+}
+
+func TestResolveNextEpisodeCountsOneForACaughtUpViewer(t *testing.T) {
+	seasons := []Season{season(1, 3)}
+	episodes := map[int64][]Episode{
+		1: {episode(1, 1, "2020-01-01"), episode(1, 2, "2020-01-08"), episode(1, 3, "2020-01-15")},
+	}
+	watched := []WatchedItem{watchedTV(23, 1, 1), watchedTV(23, 1, 2)}
+
+	result, err := resolveNextEpisode(23, seasons, "Returning Series", watched, stubFetcher(episodes, nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.remaining != 1 {
+		t.Fatalf("expected a single remaining episode, got %d", result.remaining)
+	}
+}
+
+// An upcoming entry's next episode has not aired, so there is no backlog to
+// report and the row keeps its countdown instead of a count badge.
+func TestResolveNextEpisodeReportsNoBacklogBeforeAirDate(t *testing.T) {
+	seasons := []Season{season(1, 2)}
+	episodes := map[int64][]Episode{
+		1: {episode(1, 1, farFuture), episode(1, 2, farFuture)},
+	}
+
+	result, err := resolveNextEpisode(25, seasons, "Returning Series", nil, stubFetcher(episodes, nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.found {
+		t.Fatal("expected the unaired first episode to still be reported")
+	}
+	if result.remaining != 0 {
+		t.Fatalf("expected no aired episodes, got %d", result.remaining)
+	}
+}
+
+func TestCountAiredFromSkipsFutureAndBlankAirDates(t *testing.T) {
+	today := time.Now().Format("2006-01-02")
+	episodes := []Episode{
+		episode(1, 1, "2020-01-01"),
+		// Airing today counts as available, matching how the schedule
+		// classifies a "ready" row.
+		episode(1, 2, today),
+		episode(1, 3, farFuture),
+		// TMDB leaves the air date blank until an episode is scheduled.
+		episode(1, 4, ""),
+	}
+
+	if got := countAiredFrom(episodes); got != 2 {
+		t.Fatalf("expected 2 aired episodes, got %d", got)
+	}
+}
+
 func TestTotalEpisodesExcludesSpecials(t *testing.T) {
 	got := totalEpisodes([]Season{season(0, 12), season(1, 8), season(2, 4)})
 	if got != 12 {

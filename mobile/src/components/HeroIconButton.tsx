@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 
 interface HeroIconButtonProps {
   /** Announced to screen readers: an icon alone is not self-describing. */
@@ -23,16 +23,15 @@ export default function HeroIconButton({
   children,
 }: HeroIconButtonProps) {
   return (
-    <TouchableOpacity
+    <Pressable
       onPress={onPress}
-      activeOpacity={0.75}
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={styles.button}
+      style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
       {children}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -41,15 +40,19 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
+    // iOS-only smoothing; ignored elsewhere. Replaces the plain circular arc.
+    borderCurve: "continuous",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(20,20,24,0.55)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.28)",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.45,
-    shadowRadius: 8,
-    elevation: 6,
+    // CSS box-shadow syntax replacing the legacy shadow* props plus Android
+    // `elevation`, which had to be kept in step with them by hand.
+    boxShadow: "0 3px 8px rgba(0, 0, 0, 0.45)",
+  },
+  /** Press feedback that replaces TouchableOpacity's `activeOpacity`. */
+  pressed: {
+    opacity: 0.75,
   },
 });

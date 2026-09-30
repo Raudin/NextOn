@@ -1,9 +1,11 @@
 import {
   ensureDate,
+  episodeStackDepth,
   getCountdownString,
   getGroupHeader,
   getNextAirLabel,
   groupUpcoming,
+  hasEpisodeBacklog,
   parseAirDate,
   runtimeLabel,
   toResolvedMovie,
@@ -230,6 +232,12 @@ describe("resolved item helpers", () => {
     expect(resolved.targetDate?.getDate()).toBe(1);
   });
 
+  it("defaults the episode backlog to zero when the payload has no count", () => {
+    // A schedule cached by a build that predates `episodes_remaining`.
+    expect(toResolvedShow(showItem).episodesRemaining).toBe(0);
+    expect(toResolvedShow({ ...showItem, episodes_remaining: 3 }).episodesRemaining).toBe(3);
+  });
+
   it("maps a movie without a season/episode", () => {
     const resolved = toResolvedMovie(movieItem);
     expect(resolved.id).toBe(9);
@@ -245,5 +253,38 @@ describe("resolved item helpers", () => {
   it("says Movie when the runtime is unknown", () => {
     const noRuntime = toResolvedMovie({ ...movieItem, details: { id: 9 } });
     expect(runtimeLabel(noRuntime)).toBe("Movie");
+  });
+});
+
+/**
+ * The poster badge/stack rules.
+ *
+ * A single waiting episode is the ordinary case and must stay unmarked, and a
+ * long backlog must not grow an unbounded tower of layers, so both edges of the
+ * rule are worth pinning down.
+ */
+describe("episode backlog markers", () => {
+  it("leaves a caught-up or single-episode show unmarked", () => {
+    expect(hasEpisodeBacklog(0)).toBe(false);
+    expect(hasEpisodeBacklog(1)).toBe(false);
+    expect(episodeStackDepth(0)).toBe(0);
+    expect(episodeStackDepth(1)).toBe(0);
+  });
+
+  it("marks a backlog of more than one episode", () => {
+    expect(hasEpisodeBacklog(2)).toBe(true);
+    expect(hasEpisodeBacklog(9)).toBe(true);
+  });
+
+  it("caps the stack at two layers however long the backlog is", () => {
+    expect(episodeStackDepth(2)).toBe(1);
+    expect(episodeStackDepth(3)).toBe(2);
+    expect(episodeStackDepth(40)).toBe(2);
+  });
+
+  it("treats a missing or unusable count as no backlog", () => {
+    expect(hasEpisodeBacklog(Number.NaN)).toBe(false);
+    expect(episodeStackDepth(Number.NaN)).toBe(0);
+    expect(episodeStackDepth(Number.POSITIVE_INFINITY)).toBe(0);
   });
 });

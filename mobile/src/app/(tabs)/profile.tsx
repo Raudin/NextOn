@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { Platform, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   YStack,
   Text,
@@ -34,7 +34,16 @@ import {
 
 export default function ProfileScreen() {
   const { token, logout, isLoading: authLoading, themeMode, setThemeMode, updateUser } = useAuth();
-  const router = useRouter();
+  const { replace } = useRouter();
+  const insets = useSafeAreaInsets();
+  /**
+   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
+   * the status-bar inset is applied as padding there. On iOS this stays 0 and
+   * the scroll view handles the inset natively, which is what lets the header
+   * and content scroll *under* the status bar rather than being clipped below
+   * it — the behaviour the old `SafeAreaView` wrapper prevented.
+   */
+  const topInset = Platform.OS === "android" ? insets.top : 0;
 
   const [loading, setLoading] = useState(true);
   const [profileUser, setProfileUser] = useState<User | null>(null);
@@ -75,9 +84,9 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (!authLoading && !token) {
-      router.replace("/auth");
+      replace("/auth");
     }
-  }, [authLoading, token, router]);
+  }, [authLoading, token, replace]);
 
   const loadProfile = useCallback(async () => {
     if (!token) return;
@@ -227,7 +236,7 @@ export default function ProfileScreen() {
         try {
           await deleteUserAccount();
           await logout();
-          router.replace("/auth");
+          replace("/auth");
         } catch (err: any) {
           setError(err.message || "Failed to delete account.");
         }
@@ -242,26 +251,34 @@ export default function ProfileScreen() {
       destructive: true,
       onConfirm: async () => {
         await logout();
-        router.replace("/auth");
+        replace("/auth");
       },
     });
   };
 
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <YStack
+        f={1}
+        pt={topInset}
+        // Required for the native tab bar's tap-to-scroll-to-top; see the native
+        // tabs guide on wrapping a ScrollView.
+        collapsable={false}
+      >
         <ScrollView
           showsVerticalScrollIndicator={false}
+          // Replaces the SafeAreaView wrapper: iOS insets the scroll content
+          // around the status bar natively, so the content can also scroll
+          // *under* it instead of being clipped below it.
+          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.scrollContent}
         >
           <YStack px="$4" pt="$2" pb="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
 
-            {error && (
-              <YStack bg="$red2" p="$3" br="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
+            {error ? <YStack bg="$red2" p="$3" br="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
                 <Text color="$red10" fow="bold" ta="center">{error}</Text>
                 <Text color="$red8" fos="$1" ta="center" mt="$1">Tap to dismiss</Text>
-              </YStack>
-            )}
+              </YStack> : null}
 
             <ProfileHeader
               profileUser={profileUser}
@@ -285,7 +302,7 @@ export default function ProfileScreen() {
 
           </YStack>
         </ScrollView>
-      </SafeAreaView>
+      </YStack>
 
       {/* Settings & Preferences Modal Sheet */}
       <PreferencesSection

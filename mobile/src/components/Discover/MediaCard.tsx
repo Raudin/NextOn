@@ -64,6 +64,7 @@ export default function MediaCard({
         w={cardWidth}
         h={cardHeight}
         borderRadius={grid ? 18 : "$4"}
+        borderCurve="continuous"
         overflow="hidden"
         bg="$backgroundElement"
         borderWidth={1}
@@ -88,6 +89,17 @@ export default function MediaCard({
         <WatchlistButton added={added} onPress={onToggle} />
       </YStack>
 
+      {/*
+        Footer spacing comes from `gap` alone — the meta line is never pulled up
+        over the title with a negative margin. A compact card's `$2` title sits
+        in a 21pt line box for a 12pt face, so only ~3.5pt of that box is
+        leading below the descenders; the old `mt={-6}` spent that leading and
+        then some, leaving the year's ascenders inside the title's ink. That
+        read as a tight two-line footer on a device rendering the intended face
+        and as a collision on any device whose font metrics or system font size
+        differ — which is every device that falls back to the system font,
+        since the body font is not bundled.
+      */}
       <YStack px={grid ? "$1" : 0} gap={grid ? 2 : 0}>
         <Text
           fontFamily="$body"
@@ -103,7 +115,6 @@ export default function MediaCard({
             color="$color"
             opacity={grid ? 0.55 : 0.5}
             fos={grid ? "$2" : "$1"}
-            mt={grid ? 0 : -6}
             numberOfLines={1}
           >
             {meta}

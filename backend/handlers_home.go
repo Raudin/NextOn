@@ -58,6 +58,13 @@ type HomeShowItem struct {
 	FormattedDate  string           `json:"formatted_date"`
 	IsNewSeason    bool             `json:"is_new_season"`
 	IsSeasonFinale bool             `json:"is_season_finale"`
+	// EpisodesRemaining is the backlog the viewer can start on right now:
+	// the next unwatched episode plus any later ones that have already aired.
+	// The client draws it as a count badge over the poster, so it must be
+	// resolved here — the schedule payload carries the next episode and the
+	// per-season totals, but no watched counts, so a client-side derivation
+	// would count announced-but-unaired episodes too.
+	EpisodesRemaining int64 `json:"episodes_remaining"`
 }
 
 // HomeMovieItem is one movie entry in the schedule.
@@ -83,8 +90,10 @@ type nextEpisodeResult struct {
 	episode        Episode
 	seasons        []SeasonLite
 	seasonEpisodes int64
-	status         string
-	found          bool
+	// remaining counts the episodes already available from `episode` onwards.
+	remaining int64
+	status    string
+	found     bool
 }
 
 // fetchSeasonDetail returns one season's episodes, going through the mock
@@ -171,7 +180,7 @@ func resolveNextEpisode(seriesID int64, seasons []Season, status string, watched
 			return episodes[i].EpisodeNumber < episodes[j].EpisodeNumber
 		})
 
-		for _, ep := range episodes {
+		for i, ep := range episodes {
 			// Episode 0 is TMDB's slot for specials/previews and is never
 			// trackable through this app.
 			if ep.EpisodeNumber < 1 {
@@ -182,12 +191,36 @@ func resolveNextEpisode(seriesID int64, seasons []Season, status string, watched
 			}
 			result.episode = ep
 			result.seasonEpisodes = s.EpisodeCount
+			// Everything before this episode in the season is watched, so the
+			// slice from here on is exactly the backlog a viewer can start on.
+			result.remaining = countAiredFrom(episodes[i:])
 			result.found = true
 			return result, nil
 		}
 	}
 
 	return result, nil
+}
+
+// countAiredFrom counts how many of these episodes a viewer could watch right
+// now, i.e. the ones that have already aired.
+//
+// Called with the slice starting at the first unwatched episode, so the result
+// is the show's backlog: 1 for a viewer who is up to date, more when several
+// episodes have piled up since they last watched.
+//
+// Episodes still in the future are not "remaining" — the schedule reports those
+// with a countdown instead — and a blank air date is treated the same way,
+// because TMDB fills it in only once an episode is actually scheduled.
+func countAiredFrom(episodes []Episode) int64 {
+	var count int64
+	for _, ep := range episodes {
+		if ep.AirDate == "" || isAfterToday(ep.AirDate) {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 // resolveShow looks up one watchlist show and reports its next unwatched
@@ -234,10 +267,11 @@ func resolveShow(item TMDBMedia, watched []WatchedItem, scope *callScope) (HomeS
 	}
 
 	return HomeShowItem{
-		Show:          item,
-		Episode:       next.episode,
-		FormattedDate: next.episode.AirDate,
-		IsNewSeason:   next.episode.EpisodeNumber == 1,
+		Show:              item,
+		Episode:           next.episode,
+		FormattedDate:     next.episode.AirDate,
+		IsNewSeason:       next.episode.EpisodeNumber == 1,
+		EpisodesRemaining: next.remaining,
 		IsSeasonFinale: next.seasonEpisodes > 0 &&
 			next.episode.EpisodeNumber == next.seasonEpisodes,
 		Details: MediaDetailsLite{

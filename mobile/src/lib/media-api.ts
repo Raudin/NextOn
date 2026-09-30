@@ -36,6 +36,13 @@ export interface CastMember {
   id: number;
   name: string;
   profile_path: string;
+  /**
+   * The role the actor plays in this title ("Luke Skywalker"). Optional: the
+   * server omits it when TMDB leaves it blank, and mock/fallback payloads have
+   * no credits at all, so the cast cell hides the second line rather than
+   * rendering an empty one.
+   */
+  character?: string;
 }
 
 export interface Season {
@@ -85,6 +92,44 @@ export interface MediaDetails extends TMDBMedia {
   status?: string;
   tagline?: string;
   network?: string;
+  /**
+   * Age rating — "PG", "PG-13", "R", "TV-MA", "TV-14" — resolved server-side
+   * from TMDB's per-country release dates (movies) or content ratings (TV),
+   * preferring the US entry. Absent when no rating could be resolved anywhere,
+   * in which case the meta row simply omits the badge.
+   */
+  certification?: string;
+  /**
+   * The film franchise this title belongs to, if any. Movies only: TMDB does
+   * not model collections for TV. Summary only — the films themselves come from
+   * `fetchCollection`, which the detail screen requests only when this exists.
+   */
+  collection?: MediaCollectionSummary;
+  /**
+   * "More like this" titles for the detail screen's related row. Trimmed,
+   * capped and de-duplicated against this title server-side, so the client can
+   * render it directly. Absent when TMDB has nothing to suggest.
+   */
+  recommendations?: TMDBMedia[];
+}
+
+/** A film franchise, as embedded in the details payload. */
+export interface MediaCollectionSummary {
+  id: number;
+  name: string;
+  poster_path?: string;
+  backdrop_path?: string;
+}
+
+/** A franchise and its films, as returned by `fetchCollection`. */
+export interface CollectionDetails {
+  id: number;
+  name: string;
+  overview: string;
+  poster_path: string;
+  backdrop_path: string;
+  /** The franchise's films, oldest first. */
+  parts: TMDBMedia[];
 }
 
 export interface Episode {
@@ -328,6 +373,15 @@ export interface HomeShowItem {
   formatted_date: string;
   is_new_season: boolean;
   is_season_finale: boolean;
+  /**
+   * Episodes that have already aired and are still unwatched — the backlog the
+   * Home poster's count badge shows.
+   *
+   * Server-computed on purpose: this payload has no watched counts, so working
+   * it out here would have to count announced-but-unaired episodes too.
+   * Optional because a schedule cached by an older build has no such field.
+   */
+  episodes_remaining?: number;
 }
 
 export interface HomeMovieItem {
@@ -501,11 +555,13 @@ export const fetchFavoriteStatus = (mediaId: string | number) =>
  * per-user and change constantly, and the detail screen fetches them
  * separately.
  *
- * The `_v2` key is deliberate: v1 payloads were served before the backend
- * started returning alternate `posters`, and a fresh entry is reused without
- * revalidating, so an already-cached title would keep drawing the same artwork
- * the list card shows for another 12 hours. The version bump costs one refetch
- * per title opened and lets the old keys age out on their own.
+ * The `_v3` key is deliberate, as `_v2` was before it: a fresh entry is reused
+ * without revalidating, so a payload cached by an older build would keep hiding
+ * whatever the backend has since started returning. v3 added `certification`,
+ * `collection` and `recommendations`; without the bump, a title opened before
+ * this shipped would render without any of them for a further 12 hours. The
+ * version bump costs one refetch per title opened and lets the old keys age out
+ * on their own.
  */
 export const fetchMediaDetails = async (
   type: string,
@@ -514,7 +570,30 @@ export const fetchMediaDetails = async (
   const { data } = await requestJsonCached<MediaDetails>(
     `/api/media/${type}/${id}`,
     {
-      cacheKey: `media_details_v2_${type}_${id}`,
+      cacheKey: `media_details_v3_${type}_${id}`,
+      ttl: MEDIA_DETAILS_TTL_MS,
+    },
+  );
+  return data;
+};
+
+/**
+ * A film franchise and its films, for the detail screen's collection row.
+ *
+ * Requested only when a movie's details report a `collection`, which is why it
+ * is a separate call rather than part of the details payload: the server has to
+ * make a second TMDB request to build it, and the row sits below the fold.
+ *
+ * Cached like the details themselves — a franchise's membership changes on the
+ * scale of years — and revalidated by ETag afterwards.
+ */
+export const fetchCollection = async (
+  collectionId: number,
+): Promise<CollectionDetails> => {
+  const { data } = await requestJsonCached<CollectionDetails>(
+    `/api/media/collection/${collectionId}`,
+    {
+      cacheKey: `collection_v1_${collectionId}`,
       ttl: MEDIA_DETAILS_TTL_MS,
     },
   );

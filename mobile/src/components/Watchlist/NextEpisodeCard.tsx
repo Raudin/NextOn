@@ -1,7 +1,14 @@
 import React, { useCallback, useState, useEffect } from "react";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
-import { Animated } from "react-native";
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+
 import { Button, Spinner, Text, XStack, YStack } from "tamagui";
 
 import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
@@ -25,15 +32,21 @@ export default function NextEpisodeCard({
   show,
   onFullyWatched,
 }: NextEpisodeCardProps) {
-  const router = useRouter();
+  const { push } = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [showDetails, setShowDetails] = useState<MediaDetails | null>(null);
   const [marking, setMarking] = useState(false);
 
-  const [fadeAnim] = useState(() => new Animated.Value(1));
-  const [scaleAnim] = useState(() => new Animated.Value(1));
+  /**
+   * Ground truth for the exit animation: 0 = in place, 1 = dismissed. Opacity
+   * and scale are *derived* from it in `cardStyle` below rather than being
+   * stored as animated values of their own — see the `state-ground-truth` rule.
+   * Driving the whole transition from one value also means there is exactly one
+   * thing to reset when the mutation fails.
+   */
+  const dismissed = useSharedValue(0);
 
   const loadNextEpisode = useCallback(async () => {
     setLoading(true);
@@ -93,106 +106,109 @@ export default function NextEpisodeCard({
     loadNextEpisode();
   }, [loadNextEpisode]);
 
-  const animateAndMarkWatched = async () => {
+  /**
+   * Visuals derived from the `dismissed` state: the card fades out while
+   * shrinking slightly. Both properties are GPU-accelerated, and because they
+   * are derived rather than stored there is nothing to keep in sync.
+   */
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dismissed.get(), [0, 1], [1, 0]),
+    transform: [{ scale: interpolate(dismissed.get(), [0, 1], [1, 0.95]) }],
+  }));
+
+  /**
+   * Runs the mutation once the card has animated out, then either loads the
+   * next episode and brings the card back, or leaves it dismissed.
+   */
+  const runMarkWatched = useCallback(async () => {
+    if (!episode) return;
+    try {
+      await markWatched({
+        media_id: show.id,
+        media_type: "tv",
+        season_number: episode.season_number,
+        episode_number: episode.episode_number,
+      });
+
+      const watchedStatus = await fetchWatchedStatus(show.id, "tv");
+      const activeDetails = showDetails || (await fetchMediaDetails("tv", show.id));
+
+      const watchedEpisodes = watchedStatus.episodes || [];
+      const watchedCountBySeason: Record<number, number> = {};
+      for (const ep of watchedEpisodes) {
+        watchedCountBySeason[ep.season] = (watchedCountBySeason[ep.season] || 0) + 1;
+      }
+
+      const regularSeasons = (activeDetails.seasons || [])
+        .filter((s) => s.season_number >= 1)
+        .sort((a, b) => a.season_number - b.season_number);
+      const specialSeasons = (activeDetails.seasons || [])
+        .filter((s) => s.season_number === 0);
+
+      const allSeasons = [...regularSeasons, ...specialSeasons];
+
+      let foundNext = false;
+      for (const s of allSeasons) {
+        const total = s.episode_count;
+        const watchedCount = watchedCountBySeason[s.season_number] || 0;
+        if (watchedCount < total) {
+          const seasonData = await fetchSeasonEpisodes(show.id, s.season_number);
+          const nextEp = seasonData.episodes.find(
+            (ep) =>
+              !watchedEpisodes.some(
+                (we) => we.season === ep.season_number && we.episode === ep.episode_number
+              )
+          );
+          if (nextEp) {
+            setEpisode(nextEp);
+            foundNext = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundNext) {
+        // Nothing left to watch: the card stays dismissed and the parent drops
+        // it. `marking` is deliberately left true so it cannot be re-triggered
+        // while it is being unmounted.
+        onFullyWatched(show.id);
+      } else {
+        // Fade back in with the new episode details.
+        dismissed.set(
+          withTiming(0, { duration: 250 }, (finished) => {
+            "worklet";
+            if (finished) scheduleOnRN(setMarking, false);
+          }),
+        );
+      }
+    } catch (err: any) {
+      setError(err.message || String(err));
+      // Reset the animation so the failed card is usable again.
+      dismissed.set(
+        withTiming(0, { duration: 200 }, (finished) => {
+          "worklet";
+          if (finished) scheduleOnRN(setMarking, false);
+        }),
+      );
+    }
+  }, [dismissed, episode, onFullyWatched, show.id, showDetails]);
+
+  /**
+   * Dismiss the card, then hand off to `runMarkWatched` once the exit timing has
+   * finished. `withTiming`'s callback runs on the UI thread, so `scheduleOnRN`
+   * is what hops back to JS — the direct replacement for the old
+   * `Animated.timing(...).start(callback)` ordering.
+   */
+  const animateAndMarkWatched = () => {
     if (!episode || marking) return;
     setMarking(true);
 
-    // Fade out / scale down slightly before the transition
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: true,
+    dismissed.set(
+      withTiming(1, { duration: 250 }, (finished) => {
+        "worklet";
+        if (finished) scheduleOnRN(runMarkWatched);
       }),
-      Animated.timing(scaleAnim, {
-        toValue: 0.95,
-        duration: 250,
-        useNativeDriver: true,
-      }),
-    ]).start(async () => {
-      try {
-        await markWatched({
-          media_id: show.id,
-          media_type: "tv",
-          season_number: episode.season_number,
-          episode_number: episode.episode_number,
-        });
-
-        const watchedStatus = await fetchWatchedStatus(show.id, "tv");
-        const activeDetails = showDetails || (await fetchMediaDetails("tv", show.id));
-
-        const watchedEpisodes = watchedStatus.episodes || [];
-        const watchedCountBySeason: Record<number, number> = {};
-        for (const ep of watchedEpisodes) {
-          watchedCountBySeason[ep.season] = (watchedCountBySeason[ep.season] || 0) + 1;
-        }
-
-        const regularSeasons = (activeDetails.seasons || [])
-          .filter((s) => s.season_number >= 1)
-          .sort((a, b) => a.season_number - b.season_number);
-        const specialSeasons = (activeDetails.seasons || [])
-          .filter((s) => s.season_number === 0);
-
-        const allSeasons = [...regularSeasons, ...specialSeasons];
-
-        let foundNext = false;
-        for (const s of allSeasons) {
-          const total = s.episode_count;
-          const watchedCount = watchedCountBySeason[s.season_number] || 0;
-          if (watchedCount < total) {
-            const seasonData = await fetchSeasonEpisodes(show.id, s.season_number);
-            const nextEp = seasonData.episodes.find(
-              (ep) =>
-                !watchedEpisodes.some(
-                  (we) => we.season === ep.season_number && we.episode === ep.episode_number
-                )
-            );
-            if (nextEp) {
-              setEpisode(nextEp);
-              foundNext = true;
-              break;
-            }
-          }
-        }
-
-        if (!foundNext) {
-          onFullyWatched(show.id);
-        } else {
-          // Fade back in with the new episode details
-          Animated.parallel([
-            Animated.timing(fadeAnim, {
-              toValue: 1,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-            Animated.timing(scaleAnim, {
-              toValue: 1,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            setMarking(false);
-          });
-        }
-      } catch (err: any) {
-        setError(err.message || String(err));
-        // Reset animation on error
-        Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleAnim, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setMarking(false);
-        });
-      }
-    });
+    );
   };
 
   if (loading) {
@@ -237,7 +253,7 @@ export default function NextEpisodeCard({
   if (!episode) return null;
 
   const handleCardPress = () => {
-    router.push({
+    push({
       pathname: "/media/[type]/[id]/episode/[season]/[episode]",
       params: {
         type: "tv",
@@ -250,7 +266,7 @@ export default function NextEpisodeCard({
 
   const handleShowPress = (event: any) => {
     event.stopPropagation();
-    router.push({
+    push({
       pathname: "/media/[type]/[id]",
       params: { type: "tv", id: String(show.id) },
     } as any);
@@ -270,11 +286,12 @@ export default function NextEpisodeCard({
         : null;
 
   return (
-    <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
+    <Animated.View style={cardStyle}>
       <XStack
         gap="$3"
         p="$2"
         borderRadius="$4"
+        borderCurve="continuous"
         bg="$backgroundElement"
         borderWidth={1}
         borderColor="$borderColor"
@@ -286,6 +303,7 @@ export default function NextEpisodeCard({
           w={96}
           h={64}
           borderRadius="$3"
+          borderCurve="continuous"
           overflow="hidden"
           bg="$background"
         >

@@ -53,7 +53,7 @@ type ScheduleListItem =
  * the shared HTTP layer.
  */
 export default function HomeScreen() {
-  const router = useRouter();
+  const { push, replace } = useRouter();
   const { token, isLoading: authLoading } = useAuth();
 
   const [showsReady, setShowsReady] = useState<ResolvedShowItem[]>([]);
@@ -83,9 +83,9 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!authLoading && !token) {
-      router.replace("/auth");
+      replace("/auth");
     }
-  }, [authLoading, token, router]);
+  }, [authLoading, token, replace]);
 
   /**
    * Loads the whole schedule in one request.
@@ -140,7 +140,7 @@ export default function HomeScreen() {
   const openDetails = useCallback(
     (item: ResolvedScheduleItem) => {
       if (item.isTv) {
-        router.push({
+        push({
           pathname: "/media/[type]/[id]/episode/[season]/[episode]",
           params: {
             type: "tv",
@@ -150,13 +150,13 @@ export default function HomeScreen() {
           },
         } as any);
       } else {
-        router.push({
+        push({
           pathname: "/media/[type]/[id]",
           params: { type: "movie", id: String(item.movie.id) },
         } as any);
       }
     },
-    [router],
+    [push],
   );
 
   /**
@@ -336,8 +336,26 @@ export default function HomeScreen() {
 
   return (
     <YStack f={1} bg="$background">
+      {/*
+        The top safe inset is owned by this container rather than delegated to
+        `contentInsetAdjustmentBehavior` on the list below. The
+        `ui-safe-area-scroll` rule assumes the scroller is the screen's root
+        scroller; this screen deliberately pins the tabs toggle above it, so the
+        FlashList can never be a direct child and the inset has to live here.
+        See `(tabs)/profile.tsx` for the migrated form, where the ScrollView
+        *is* the direct child.
+      */}
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <YStack f={1} px="$4" gap="$4">
+        <YStack
+          f={1}
+          px="$4"
+          gap="$4"
+          // Required for the native tab bar's tap-to-scroll-to-top: the docs
+          // state that when a screen wraps its ScrollView, the wrapper must opt
+          // out of view flattening or the native tab bar cannot find the scroll
+          // view to drive.
+          collapsable={false}
+        >
           {/* Top Tabs Toggle: Shows vs Movies */}
           <XStack mt="$2" gap="$3" ai="center">
             {(["tv", "movies"] as const).map((tab) => {
@@ -356,9 +374,7 @@ export default function HomeScreen() {
                 </Text>
               );
             })}
-            {backgroundRefreshing && (
-              <Spinner size="small" color="$color" opacity={0.6} />
-            )}
+            {backgroundRefreshing ? <Spinner size="small" color="$color" opacity={0.6} /> : null}
           </XStack>
 
           {showLoadingUI ? (

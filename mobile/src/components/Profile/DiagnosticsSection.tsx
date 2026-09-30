@@ -24,7 +24,7 @@ import {
  */
 export default function DiagnosticsSection() {
   const { isSyncing, lastSyncedAt, lastError, pendingCount, syncNow } = useSync();
-  const router = useRouter();
+  const { push } = useRouter();
   const [report, setReport] = useState<DiagnosticsReport | null>(null);
   const [syncVersion, setSyncVersion] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -121,7 +121,7 @@ export default function DiagnosticsSection() {
               </Text>
             </Pressable>
             {/* The two Skia effect ports, verified on a device rather than in Jest. */}
-            <Pressable onPress={() => router.push("/effects")} style={styles.action}>
+            <Pressable onPress={() => push("/effects")} style={styles.action}>
               <Text color="$color" fow="700" fos="$2">
                 Visual effects
               </Text>

@@ -59,4 +59,22 @@ module.exports = defineConfig([
       },
     },
   },
+  {
+    // Recommended by the `vercel-react-native-skills` rule
+    // `rendering-no-falsy-and`: `{value && <Comp />}` crashes React Native in
+    // production when `value` is a JSX-renderable falsy (`""` or `0`), because
+    // the falsy value itself gets rendered as text outside a <Text>.
+    //
+    // The `react` plugin is already registered by `eslint-config-expo/flat`
+    // (see its `flat/utils/react.js`), so only the rule is switched on here.
+    // Both accepted idioms are allowed: the ternary (`x !== null ? … : null`)
+    // and the explicit coercion (`!!x && …`).
+    files: ["**/*.tsx"],
+    rules: {
+      "react/jsx-no-leaked-render": [
+        "error",
+        { validStrategies: ["ternary", "coerce"] },
+      ],
+    },
+  },
 ]);

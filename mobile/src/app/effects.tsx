@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Platform, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text, XStack, YStack, useThemeName } from "tamagui";
 
 import {
@@ -117,6 +117,14 @@ export default function EffectsScreen() {
   const themeName = useThemeName();
   const appTheme: "dark" | "light" = themeName === "light" ? "light" : "dark";
 
+  const insets = useSafeAreaInsets();
+  /**
+   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
+   * the status-bar inset is applied as padding there. On iOS the scroll view
+   * handles it and this stays 0. Same pattern as `(tabs)/profile.tsx`.
+   */
+  const topInset = Platform.OS === "android" ? insets.top : 0;
+
   const [active, setActive] = useState(true);
   const [staticColors, setStaticColors] = useState(false);
   const [tuning, setTuning] = useState(false);
@@ -134,9 +142,11 @@ export default function EffectsScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={styles.flex} edges={["top"]}>
+      <YStack f={1} pt={topInset}>
         <ScrollView
           showsVerticalScrollIndicator={false}
+          // Replaces the SafeAreaView wrapper; see `(tabs)/profile.tsx`.
+          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.scrollContent}
         >
           <YStack px="$4" pt="$2" pb="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
@@ -305,13 +315,12 @@ export default function EffectsScreen() {
             </YStack>
           </YStack>
         </ScrollView>
-      </SafeAreaView>
+      </YStack>
     </YStack>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   scrollContent: { paddingBottom: 120 },
   chip: {
     paddingHorizontal: 12,

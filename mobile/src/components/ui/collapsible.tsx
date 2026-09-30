@@ -29,13 +29,11 @@ export function Collapsible({ children, title }: PropsWithChildren & { title: st
 
         <ThemedText type="small">{title}</ThemedText>
       </Pressable>
-      {isOpen && (
-        <Animated.View entering={FadeIn.duration(200)}>
+      {isOpen ? <Animated.View entering={FadeIn.duration(200)}>
           <ThemedView type="backgroundElement" style={styles.content}>
             {children}
           </ThemedView>
-        </Animated.View>
-      )}
+        </Animated.View> : null}
     </ThemedView>
   );
 }

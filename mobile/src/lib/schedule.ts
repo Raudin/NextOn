@@ -34,6 +34,11 @@ export interface ResolvedShowItem {
   /** Badge state, computed server-side so render does not re-derive it. */
   isNewSeason: boolean;
   isSeasonFinale: boolean;
+  /**
+   * Aired-but-unwatched episodes, for the count badge and the poster stack.
+   * Zero for a schedule cached before the server sent the field.
+   */
+  episodesRemaining: number;
 }
 
 export interface ResolvedMovieItem {
@@ -80,6 +85,9 @@ export const toResolvedShow = (item: HomeShowItem): ResolvedShowItem => ({
   targetDate: parseAirDate(item.formatted_date),
   isNewSeason: item.is_new_season,
   isSeasonFinale: item.is_season_finale,
+  // `?? 0` rather than a cast: a payload cached by an older build has no such
+  // field, and "no badge" is the correct rendering of "unknown".
+  episodesRemaining: item.episodes_remaining ?? 0,
 });
 
 export const toResolvedMovie = (item: HomeMovieItem): ResolvedMovieItem => ({
@@ -221,6 +229,31 @@ export const groupUpcoming = <T extends ResolvedScheduleItem>(
 /** Poster path for either item shape. */
 export const posterPathOf = (item: ResolvedScheduleItem): string =>
   item.isTv ? item.show.poster_path : item.movie.poster_path;
+
+/** Maximum stacked poster layers drawn behind a main poster. */
+const MAX_STACK_LAYERS = 2;
+
+/**
+ * Whether a show has a backlog worth flagging.
+ *
+ * One waiting episode is the ordinary case — a single episode behind the one
+ * you are on — so it gets no marker at all. Anything beyond that is a pile-up,
+ * and gets the count badge and the stacked posters.
+ */
+export const hasEpisodeBacklog = (episodesRemaining: number): boolean =>
+  Number.isFinite(episodesRemaining) && episodesRemaining > 1;
+
+/**
+ * How many poster layers to draw behind a show's main poster.
+ *
+ * The stack is a depth cue for the backlog, capped at two layers so a long
+ * backlog keeps the row's shape instead of growing a tower. Returns 0 for
+ * movies, upcoming rows and schedules from a build that sent no count.
+ */
+export const episodeStackDepth = (episodesRemaining: number): number =>
+  hasEpisodeBacklog(episodesRemaining)
+    ? Math.min(episodesRemaining - 1, MAX_STACK_LAYERS)
+    : 0;
 
 /** Display title for either item shape. */
 export const titleOf = (item: ResolvedScheduleItem): string =>

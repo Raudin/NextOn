@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bell,
@@ -48,7 +48,7 @@ interface PreferencesSectionProps {
 const DESTRUCTIVE = "#FF3B30";
 
 type SettingsRowProps = {
-  icon: LucideIcon;
+  // icon: LucideIcon;
   title: string;
   subtitle?: string;
   tint?: string;
@@ -58,7 +58,7 @@ type SettingsRowProps = {
 };
 
 function SettingsRow({
-  icon,
+  // icon,
   title,
   subtitle,
   tint = "#8E8E93",
@@ -75,7 +75,7 @@ function SettingsRow({
       style={({ pressed }) => (pressed && onPress ? styles.pressed : undefined)}
     >
       <XStack ai="center" gap={LIST_ROW_GAP} px={LIST_ROW_PADDING} minHeight={subtitle ? 60 : 52}>
-        <IconTile icon={icon} tint={destructive ? DESTRUCTIVE : tint} />
+        {/* <IconTile icon={icon} tint={destructive ? DESTRUCTIVE : tint} /> */}
         <YStack f={1} gap={1}>
           <Text color={destructive ? "$red10" : "$color"} fow="500" fos="$3">
             {title}
@@ -122,25 +122,53 @@ export default function PreferencesSection({
     onImageCacheCleared(await clearImageCache());
   };
 
+  /**
+   * Whether the platform can present a real native sheet.
+   *
+   * `presentationStyle="formSheet"` is iOS-only; Android ignores it and always
+   * presents full-screen, so Android keeps the hand-rolled sheet over a dimmed
+   * backdrop. This is the `ui-native-modals` rule applied where the platform
+   * actually supports it: on iOS the system supplies the grabber,
+   * swipe-to-dismiss, detent handling, keyboard avoidance and accessibility
+   * containment.
+   */
+  const isIOS = Platform.OS === "ios";
+
   return (
-    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={onClose}
-          accessibilityLabel="Close settings"
-        />
+    <Modal
+      visible={isOpen}
+      presentationStyle={isIOS ? "formSheet" : undefined}
+      // A native form sheet is not transparent: it is its own presented
+      // container, so neither the custom backdrop nor the overlay wrapper is
+      // rendered for it.
+      transparent={!isIOS}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={isIOS ? styles.nativeContainer : styles.overlay}>
+        {isIOS ? null : (
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={onClose}
+            accessibilityLabel="Close settings"
+          />
+        )}
 
         <YStack
           bg="$background"
-          style={[
-            styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, 16) },
-          ]}
+          style={
+            isIOS
+              ? styles.nativeSheet
+              : [styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]
+          }
         >
-          <YStack ai="center" pt={8}>
-            <YStack w={36} h={4} br={2} bg="$color" opacity={0.2} />
-          </YStack>
+          {isIOS ? null : (
+            // The native sheet draws its own grabber; only the hand-rolled sheet
+            // needs one.
+            <YStack ai="center" pt={8}>
+              <YStack w={36} h={4} br={2} bg="$color" opacity={0.2} />
+            </YStack>
+          )}
 
           <XStack ai="center" jc="space-between" px={18} py={10}>
             <Text fow="800" fos="$7" color="$color">
@@ -153,7 +181,7 @@ export default function PreferencesSection({
               pressStyle={{ opacity: 0.5 }}
               accessibilityLabel="Done"
             >
-              <Text color="$purple10" fow="700" fos="$4">
+              <Text color="$color" fow="700" fos="$4">
                 Done
               </Text>
             </Button>
@@ -168,9 +196,9 @@ export default function PreferencesSection({
               <YStack gap={8}>
                 <SectionHeader>Preferences</SectionHeader>
                 <Group>
-                  <SettingsRow
-                    icon={Bell}
-                    tint="#FF9500"
+                  {/* <SettingsRow
+                    // icon={Bell}
+                    // tint="#FF9500"
                     title="Notifications"
                     trailing={
                       <SettingsSwitch
@@ -180,10 +208,10 @@ export default function PreferencesSection({
                       />
                     }
                   />
-                  <Separator />
+                  <Separator /> */}
                   <SettingsRow
-                    icon={SunMoon}
-                    tint="#5856D6"
+                    // icon={SunMoon}
+                    // tint="#5856D6"
                     title="Appearance"
                     onPress={onCycleAppearance}
                     trailing={
@@ -202,8 +230,8 @@ export default function PreferencesSection({
                 <SectionHeader>Storage</SectionHeader>
                 <Group>
                   <SettingsRow
-                    icon={ImageOff}
-                    tint="#0A84FF"
+                    // icon={ImageOff}
+                    // tint="#0A84FF"
                     title="Clear image cache"
                     subtitle="Reclaims downloaded artwork. Images re-download as you browse."
                     trailing={null}
@@ -216,8 +244,8 @@ export default function PreferencesSection({
                 <SectionHeader>Privacy & data</SectionHeader>
                 <Group>
                   <SettingsRow
-                    icon={RotateCcw}
-                    destructive
+                    // icon={RotateCcw}
+                    // destructive
                     title="Clear watch history"
                     trailing={null}
                     onPress={() => {
@@ -227,8 +255,8 @@ export default function PreferencesSection({
                   />
                   <Separator />
                   <SettingsRow
-                    icon={Trash}
-                    destructive
+                    // icon={Trash}
+                    // destructive
                     title="Delete account"
                     trailing={null}
                     onPress={() => {
@@ -264,6 +292,18 @@ export default function PreferencesSection({
 }
 
 const styles = StyleSheet.create({
+  /** Full-bleed host for the native form sheet (iOS). */
+  nativeContainer: {
+    flex: 1,
+  },
+  /**
+   * The native form sheet supplies its own rounded container, so this only has
+   * to fill it. The radius, max height and max width below belong to the
+   * hand-rolled Android sheet and would fight the system sheet if applied here.
+   */
+  nativeSheet: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.4)",
@@ -276,6 +316,8 @@ const styles = StyleSheet.create({
     maxHeight: "88%",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    // iOS-only smoothing; ignored elsewhere. Matches the rounded cards.
+    borderCurve: "continuous",
     overflow: "hidden",
   },
   /** Shrinks against the sheet's maxHeight so the content scrolls instead of clipping. */

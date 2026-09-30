@@ -156,6 +156,12 @@ type CastMember struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	ProfilePath string `json:"profile_path"`
+	// Character is the role this person plays in the title. TMDB exposes it on
+	// `credits.cast[].character` for movies and TV alike, so the existing
+	// credits append already carries it and no extra request is needed.
+	// Absent for fallback payloads and for the rare entry TMDB leaves blank,
+	// in which case the detail screen simply omits the second line.
+	Character string `json:"character,omitempty"`
 }
 
 type Season struct {
@@ -216,6 +222,22 @@ type MediaDetails struct {
 	Status          string       `json:"status,omitempty"`
 	Tagline         string       `json:"tagline,omitempty"`
 	Network         string       `json:"network,omitempty"`
+	// Certification is the title's age rating, resolved from TMDB's
+	// country-specific data (see extractCertification). Empty when no rating
+	// could be resolved anywhere, in which case the client hides the badge
+	// rather than showing a placeholder.
+	Certification string `json:"certification,omitempty"`
+	// Collection is the film franchise this title belongs to, if any. TMDB only
+	// models collections for movies, so this is always nil for TV. It is the
+	// summary only: the films themselves come from
+	// GET /api/media/collection/:id, which the client asks for only when this
+	// is present, keeping the extra TMDB call off the detail screen's critical
+	// path.
+	Collection *CollectionSummary `json:"collection,omitempty"`
+	// Recommendations are the "more like this" titles for the related row,
+	// already trimmed to the fields a list card draws, de-duplicated against
+	// this title, and capped. Absent when TMDB has nothing to suggest.
+	Recommendations []TMDBMedia `json:"recommendations,omitempty"`
 	// Posters holds a few alternate poster variants. List cards always draw
 	// `poster_path`, so the detail hero picks one of these instead of repeating
 	// the exact artwork the user just tapped.
@@ -235,13 +257,87 @@ type tmdbVideosResult struct {
 	Results []Video `json:"results"`
 }
 
+// tmdbReleaseDateInfo is one release entry within a country's release-dates
+// block. `type` is TMDB's release-type code: 1 premiere, 2 theatrical
+// (limited), 3 theatrical, 4 digital, 5 physical, 6 TV.
+type tmdbReleaseDateInfo struct {
+	Certification string `json:"certification"`
+	Type          int    `json:"type"`
+}
+
+type tmdbReleaseDatesResult struct {
+	Iso3166_1    string                `json:"iso_3166_1"`
+	ReleaseDates []tmdbReleaseDateInfo `json:"release_dates"`
+}
+
+// tmdbReleaseDatesResponse is the wire shape of `/movie/{id}/release_dates`,
+// also available as an append to the movie details request.
+type tmdbReleaseDatesResponse struct {
+	Results []tmdbReleaseDatesResult `json:"results"`
+}
+
+type tmdbContentRating struct {
+	Iso3166_1 string `json:"iso_3166_1"`
+	Rating    string `json:"rating"`
+}
+
+// tmdbContentRatingsResponse is the wire shape of
+// `/tv/{id}/content_ratings`, also available as an append to the TV details
+// request. TV has no release-dates equivalent for ratings: `rating` is already
+// the "TV-MA"/"TV-14" string the client shows.
+type tmdbContentRatingsResponse struct {
+	Results []tmdbContentRating `json:"results"`
+}
+
+// tmdbRecommendationsResponse covers both `/recommendations` and `/similar`,
+// which share the same list shape.
+type tmdbRecommendationsResponse struct {
+	Results []TMDBMedia `json:"results"`
+}
+
+// tmdbCollectionResponse is the wire shape of `/collection/{id}`.
+type tmdbCollectionResponse struct {
+	ID           int64       `json:"id"`
+	Name         string      `json:"name"`
+	Overview     string      `json:"overview"`
+	PosterPath   string      `json:"poster_path"`
+	BackdropPath string      `json:"backdrop_path"`
+	Parts        []TMDBMedia `json:"parts"`
+}
+
+// CollectionSummary is the franchise a movie belongs to, sent inline with the
+// details payload. It is TMDB's `belongs_to_collection` under a shorter name,
+// and it deliberately excludes the films: those come from
+// GET /api/media/collection/:id so that the details request stays one TMDB call.
+type CollectionSummary struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	PosterPath   string `json:"poster_path,omitempty"`
+	BackdropPath string `json:"backdrop_path,omitempty"`
+}
+
+// CollectionDetails is a franchise and its films, as served by
+// GET /api/media/collection/:id.
+type CollectionDetails struct {
+	ID           int64       `json:"id"`
+	Name         string      `json:"name"`
+	Overview     string      `json:"overview"`
+	PosterPath   string      `json:"poster_path"`
+	BackdropPath string      `json:"backdrop_path"`
+	Parts        []TMDBMedia `json:"parts"`
+}
+
 type tmdbMediaDetailsResponse struct {
 	MediaDetails
-	ExternalIDs tmdbExternalIDs    `json:"external_ids"`
-	Credits     tmdbCredits        `json:"credits"`
-	Images      tmdbImagesResponse `json:"images"`
-	Videos      tmdbVideosResult   `json:"videos"`
-	Networks    []Network          `json:"networks"`
+	ExternalIDs         tmdbExternalIDs             `json:"external_ids"`
+	Credits             tmdbCredits                 `json:"credits"`
+	Images              tmdbImagesResponse          `json:"images"`
+	Videos              tmdbVideosResult            `json:"videos"`
+	Networks            []Network                   `json:"networks"`
+	BelongsToCollection *CollectionSummary          `json:"belongs_to_collection"`
+	ReleaseDates        tmdbReleaseDatesResponse    `json:"release_dates"`
+	ContentRatings      tmdbContentRatingsResponse  `json:"content_ratings"`
+	Recommendations     tmdbRecommendationsResponse `json:"recommendations"`
 }
 
 type tmdbExternalIDs struct {

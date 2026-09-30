@@ -140,6 +140,10 @@ func newRouter() *gin.Engine {
 	r.GET("/api/media/tv/:id", CachePolicyMiddleware(publicCachePolicy), handleTvDetails)
 	r.GET("/api/media/tv/:id/season/:season", CachePolicyMiddleware(publicCachePolicy), handleSeasonDetails)
 	r.GET("/api/media/tv/:id/season/:season/episode/:episode", CachePolicyMiddleware(publicCachePolicy), handleEpisodeDetails)
+	// Franchise films. Requested lazily by the detail screen and only when a
+	// movie reports a `collection`, so the extra TMDB call never sits on the
+	// critical path of the details request.
+	r.GET("/api/media/collection/:id", CachePolicyMiddleware(publicCachePolicy), handleCollectionDetails)
 
 	// Watched (Private, authenticated)
 	r.POST("/api/watched", CachePolicyMiddleware(noStoreCachePolicy), AuthMiddleware(), handleAddWatched)

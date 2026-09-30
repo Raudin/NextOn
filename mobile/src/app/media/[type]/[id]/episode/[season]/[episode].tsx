@@ -2,9 +2,17 @@ import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Check, Lock } from "lucide-react-native";
 import { useEffect, useState, useMemo } from "react";
-import { StyleSheet } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Button, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
+import { Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  Button,
+  ScrollView,
+  Spinner,
+  Text,
+  useTheme,
+  XStack,
+  YStack,
+} from "tamagui";
 import BackButton from "@/components/BackButton";
 import LoadingOrb from "@/components/LoadingOrb";
 import { useAuth } from "@/context/AuthContext";
@@ -23,9 +31,32 @@ import {
   type MediaDetails,
 } from "@/lib/media-api";
 
+/**
+ * Episode stills are 16:9 on TMDB, so the hero is sized by that ratio rather
+ * than a fixed height. A fixed height has to be tall enough for a portrait phone
+ * with copy overlaid on it, and `cover` then crops most of the frame away to
+ * fill it; letting the width drive the height keeps the whole still visible and
+ * adapts to tablets and landscape on its own.
+ */
+const STILL_ASPECT_RATIO = 16 / 9;
+
 export default function EpisodeDetailScreen() {
-  const router = useRouter();
+  const { back, push } = useRouter();
   const { token } = useAuth();
+  const insets = useSafeAreaInsets();
+  /**
+   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
+   * the status-bar inset is applied as padding there. On iOS the scroll view
+   * handles it and this stays 0, so the still can scroll under the status bar
+   * rather than being clipped below it. Same pattern as `(tabs)/profile.tsx`.
+   */
+  const topInset = Platform.OS === "android" ? insets.top : 0;
+  /**
+   * Lucide icons take a resolved colour rather than a theme token, so the two
+   * states of the watched button's check read the active theme here — the same
+   * way `useProgressTheme` resolves its tier colours.
+   */
+  const theme = useTheme();
   const params = useLocalSearchParams<{
     type: string;
     id: string;
@@ -116,7 +147,7 @@ export default function EpisodeDetailScreen() {
 
   const toggleWatched = async () => {
     if (!token) {
-      router.push("/auth");
+      push("/auth");
       return;
     }
     if (!episode || toggling) {
@@ -153,9 +184,35 @@ export default function EpisodeDetailScreen() {
     return `S${s}E${e}`;
   }, [episode]);
 
+  /**
+   * Artwork for the hero, in preference order: the episode's own still, the
+   * show's backdrop, then its poster.
+   *
+   * The role follows the rendered size rather than the data type — a still drawn
+   * full-bleed needs the same bucket as a backdrop, and a poster stretched over a
+   * 16:9 frame is still a card-sized image. Collapsing the three call sites into
+   * one also means the cache policy and transition stay in step with the role.
+   *
+   * The dependency list holds the whole objects rather than the three paths: the
+   * React Compiler lint rule rejects a manual list narrower than its inferred
+   * one.
+   */
+  const heroImage = useMemo(() => {
+    if (episode?.still_path) {
+      return { path: episode.still_path, role: "backdrop" as const };
+    }
+    if (showDetails?.backdrop_path) {
+      return { path: showDetails.backdrop_path, role: "backdrop" as const };
+    }
+    if (showDetails?.poster_path) {
+      return { path: showDetails.poster_path, role: "posterCard" as const };
+    }
+    return null;
+  }, [episode, showDetails]);
+
   return (
     <YStack f={1} bg="$background">
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <YStack f={1} pt={topInset}>
         {showLoadingUI ? (
           <LoadingOrb label="Loading episode..." />
         ) : error ? (
@@ -163,41 +220,31 @@ export default function EpisodeDetailScreen() {
             <Text color="$red10" fow="700" ta="center">
               {error}
             </Text>
-            <Button onPress={() => router.back()}>Back</Button>
+            <Button onPress={() => back()}>Back</Button>
           </YStack>
         ) : episode ? (
           <ScrollView
             showsVerticalScrollIndicator={false}
+            // Replaces the SafeAreaView wrapper; see `(tabs)/profile.tsx`.
+            contentInsetAdjustmentBehavior="automatic"
             contentContainerStyle={{ paddingBottom: 120 }}
           >
-            {/* Hero Backdrop */}
-            <YStack h={520} bg="#151515">
-              {episode.still_path ? (
+            {/*
+              Hero: the episode still.
+
+              Only the back affordance sits on the artwork now, which is why
+              there is no scrim: everything that used to be layered on top of the
+              image moved below it.
+            */}
+            <YStack aspectRatio={STILL_ASPECT_RATIO} bg="#151515">
+              {heroImage ? (
                 <Image
-                  source={{ uri: imageUrl(episode.still_path, "backdrop") }}
+                  source={{ uri: imageUrl(heroImage.path, heroImage.role) }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
-                  cachePolicy={imageCachePolicy("backdrop")}
-                  transition={imageTransitionMs("backdrop")}
-                  recyclingKey={episode.still_path}
-                />
-              ) : showDetails?.backdrop_path ? (
-                <Image
-                  source={{ uri: imageUrl(showDetails.backdrop_path, "backdrop") }}
-                  style={{ width: "100%", height: "100%" }}
-                  contentFit="cover"
-                  cachePolicy={imageCachePolicy("backdrop")}
-                  transition={imageTransitionMs("backdrop")}
-                  recyclingKey={showDetails.backdrop_path}
-                />
-              ) : showDetails?.poster_path ? (
-                <Image
-                  source={{ uri: imageUrl(showDetails.poster_path, "posterCard") }}
-                  style={{ width: "100%", height: "100%" }}
-                  contentFit="cover"
-                  cachePolicy={imageCachePolicy("posterCard")}
-                  transition={imageTransitionMs("posterCard")}
-                  recyclingKey={showDetails.poster_path}
+                  cachePolicy={imageCachePolicy(heroImage.role)}
+                  transition={imageTransitionMs(heroImage.role)}
+                  recyclingKey={heroImage.path}
                 />
               ) : (
                 <YStack f={1} ai="center" jc="center">
@@ -207,118 +254,101 @@ export default function EpisodeDetailScreen() {
                 </YStack>
               )}
 
-              {/* Gradient Overlay */}
-              <YStack style={styles.gradientOverlay} />
-
-              <YStack
-                pos="absolute"
-                t={0}
-                l={0}
-                r={0}
-                b={0}
-                jc="space-between"
-                p="$4"
-              >
-                {/* Back button */}
-                <BackButton onPress={() => router.back()} />
-
-                {/* Bottom of hero: Title & Metadata & Action Button */}
-                <YStack gap="$3" ai="center" w="100%">
-                  {/* Episode Title */}
-                  <Text
-                    color="white"
-                    fow="900"
-                    fos="$9"
-                    numberOfLines={3}
-                    ta="center"
-                    style={styles.titleText}
-                  >
-                    {episode.name}
-                  </Text>
-
-                  {/* Metadata subtitle */}
-                  <XStack ai="center" jc="center" gap="$2" flexWrap="wrap" w="100%">
-                    <Text color="white" opacity={0.85} fow="500" fos="$3">
-                      {formattedSeasonEpisode}
-                    </Text>
-                    {episode.runtime ? (
-                      <XStack ai="center" gap="$2">
-                        <YStack
-                          w={3}
-                          h={3}
-                          borderRadius={999}
-                          bg="rgba(255,255,255,0.5)"
-                        />
-                        <Text color="white" opacity={0.7} fow="500" fos="$3">
-                          {episode.runtime} min
-                        </Text>
-                      </XStack>
-                    ) : null}
-                    {episode.air_date ? (
-                      <XStack ai="center" gap="$2">
-                        <YStack
-                          w={3}
-                          h={3}
-                          borderRadius={999}
-                          bg="rgba(255,255,255,0.5)"
-                        />
-                        <Text color="white" opacity={0.7} fow="500" fos="$3">
-                          {episode.air_date}
-                        </Text>
-                      </XStack>
-                    ) : null}
-                  </XStack>
-
-                  {/* Mark as Watched action button styled exactly like Watchlist button on show details page */}
-                  <XStack gap="$3" ai="center" jc="center" mt="$2" w="100%">
-                    <Button
-                      f={1}
-                      size="$4"
-                      borderRadius="$10"
-                      bg={
-                        watched
-                          ? "rgba(34, 165, 89, 0.42)"
-                          : "rgba(20,20,24,0.55)"
-                      }
-                      color="white"
-                      borderWidth={1}
-                      borderColor={
-                        watched
-                          ? "rgba(120, 235, 165, 0.65)"
-                          : "rgba(255,255,255,0.28)"
-                      }
-                      style={styles.actionButtonShadow}
-                      disabled={toggling || isEpisodeUnreleased}
-                      onPress={toggleWatched}
-                      icon={
-                        toggling ? (
-                          <Spinner size="small" color="white" />
-                        ) : isEpisodeUnreleased ? (
-                          <Lock
-                            size={16}
-                            color="rgba(255,255,255,0.7)"
-                            strokeWidth={2.4}
-                          />
-                        ) : (
-                          <Check
-                            size={17}
-                            color="#FFFFFF"
-                            strokeWidth={3}
-                          />
-                        )
-                      }
-                      h={46}
-                      px="$3"
-                    >
-                      {isEpisodeUnreleased
-                        ? "Unreleased"
-                        : watched
-                          ? "Watched"
-                          : "Mark as Watched"}
-                    </Button>
-                  </XStack>
-                </YStack>
+              <YStack pos="absolute" t={0} l={0} r={0} p="$4">
+                <BackButton onPress={() => back()} />
               </YStack>
+            </YStack>
+
+            {/*
+              Title, metadata and the watched action, on the page background
+              rather than over the artwork: a 16:9 still is too short to carry a
+              three-line title, a metadata row and a 46pt button, and white copy
+              over an unscrimmed frame is legible only on the dark ones.
+            */}
+            <YStack px="$4" pt="$5" gap="$4">
+              <YStack gap="$2">
+                <Text color="$color" fow="900" fos="$9" numberOfLines={3}>
+                  {episode.name}
+                </Text>
+
+                {/* Metadata row: dot separated like the media-detail screen's
+                    genre line, in theme colour because it sits on the page. */}
+                <XStack ai="center" gap="$2" flexWrap="wrap" w="100%">
+                  <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                    {formattedSeasonEpisode}
+                  </Text>
+                  {episode.runtime ? (
+                    <XStack ai="center" gap="$2">
+                      <YStack
+                        w={3}
+                        h={3}
+                        borderRadius={999}
+                        bg="$color"
+                        opacity={0.35}
+                      />
+                      <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                        {episode.runtime} min
+                      </Text>
+                    </XStack>
+                  ) : null}
+                  {episode.air_date ? (
+                    <XStack ai="center" gap="$2">
+                      <YStack
+                        w={3}
+                        h={3}
+                        borderRadius={999}
+                        bg="$color"
+                        opacity={0.35}
+                      />
+                      <Text color="$color" opacity={0.75} fow="500" fos="$3">
+                        {episode.air_date}
+                      </Text>
+                    </XStack>
+                  ) : null}
+                </XStack>
+              </YStack>
+
+              {/*
+                Mark as Watched, off the artwork. The theme surface and hairline
+                border replace the translucent artwork pill it used to be: the
+                white label and washed-out green it used for the watched state
+                were only legible against a dark frame.
+              */}
+              <Button
+                size="$4"
+                borderRadius="$10"
+                bg={watched ? "$green10" : "$backgroundElement"}
+                color={watched ? "white" : "$color"}
+                borderWidth={1}
+                borderColor={watched ? "$green10" : "$borderColor"}
+                disabled={toggling || isEpisodeUnreleased}
+                onPress={toggleWatched}
+                icon={
+                  toggling ? (
+                    <Spinner size="small" color={watched ? "white" : "$color"} />
+                  ) : isEpisodeUnreleased ? (
+                    <Lock
+                      size={16}
+                      color={theme.color10?.val ?? "#9BA1A6"}
+                      strokeWidth={2.4}
+                    />
+                  ) : (
+                    <Check
+                      size={17}
+                      color={watched ? "#FFFFFF" : (theme.color?.val ?? "#000000")}
+                      strokeWidth={3}
+                    />
+                  )
+                }
+                h={46}
+                px="$3"
+              >
+                {isEpisodeUnreleased
+                  ? "Unreleased"
+                  : watched
+                    ? "Watched"
+                    : "Mark as Watched"}
+              </Button>
             </YStack>
 
             {/* Episode Content: Just the Overview section directly below the hero banner */}
@@ -334,31 +364,7 @@ export default function EpisodeDetailScreen() {
             </YStack>
           </ScrollView>
         ) : null}
-      </SafeAreaView>
+      </YStack>
     </YStack>
   );
 }
-
-const styles = StyleSheet.create({
-  gradientOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: "65%",
-    backgroundColor: "transparent",
-  },
-  // Translucent, always-legible action button that sits on top of the backdrop.
-  actionButtonShadow: {
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.45,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  titleText: {
-    textShadowColor: "rgba(0,0,0,0.8)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
-  },
-});

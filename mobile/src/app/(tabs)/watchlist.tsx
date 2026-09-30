@@ -83,7 +83,7 @@ function isFutureDate(value?: string | null) {
 }
 
 export default function WatchlistScreen() {
-  const router = useRouter();
+  const { push, replace } = useRouter();
   const { width } = useWindowDimensions();
   const { token, isLoading: authLoading } = useAuth();
   // The app's effective appearance, for the effect ports: they default to
@@ -118,9 +118,9 @@ export default function WatchlistScreen() {
 
   useEffect(() => {
     if (!authLoading && !token) {
-      router.replace("/auth");
+      replace("/auth");
     }
-  }, [authLoading, router, token]);
+  }, [authLoading, replace, token]);
 
   /**
    * Loads the watchlist with progress included.
@@ -178,12 +178,12 @@ export default function WatchlistScreen() {
   const openDetails = useCallback(
     (item: WatchlistEntry) => {
       const type = item.media_type || (item.title ? "movie" : "tv");
-      router.push({
+      push({
         pathname: "/media/[type]/[id]",
         params: { type, id: String(item.id) },
       } as any);
     },
-    [router],
+    [push],
   );
 
   /**
@@ -536,8 +536,23 @@ export default function WatchlistScreen() {
 
   return (
     <YStack f={1} bg="$background">
+      {/*
+        The top safe inset is owned by this container rather than delegated to
+        `contentInsetAdjustmentBehavior` on the FlashList below. The
+        `ui-safe-area-scroll` rule assumes the scroller is the screen's root
+        scroller; this screen deliberately pins the tab switcher, the menu
+        affordance and the search field above it, so the list can never be a
+        direct child. See `(tabs)/profile.tsx` for the migrated form.
+      */}
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <YStack f={1} px="$4" position="relative">
+        <YStack
+          f={1}
+          px="$4"
+          position="relative"
+          // Required for the native tab bar's tap-to-scroll-to-top; see the
+          // native tabs guide on wrapping a ScrollView.
+          collapsable={false}
+        >
           <XStack mt="$2" ai="center" jc="space-between">
             <XStack ai="center" gap="$2">
               <WatchlistTabs
@@ -549,9 +564,7 @@ export default function WatchlistScreen() {
                   setStatusFilter(null);
                 }}
               />
-              {backgroundRefreshing && (
-                <Spinner size="small" color="$color" opacity={0.6} />
-              )}
+              {backgroundRefreshing ? <Spinner size="small" color="$color" opacity={0.6} /> : null}
             </XStack>
             <XStack gap="$2" ai="center">
               <HeaderIconButton
@@ -566,7 +579,14 @@ export default function WatchlistScreen() {
           {showingLocalMirror ? (
             // Say so rather than quietly presenting an incomplete view: the
             // mirror has no per-show progress, and it can be behind the server.
-            <YStack bg="$backgroundElement" br="$3" px="$3" py="$2" mt="$2">
+            <YStack
+              bg="$backgroundElement"
+              br="$3"
+              borderCurve="continuous"
+              px="$3"
+              py="$2"
+              mt="$2"
+            >
               <Text color="$color" opacity={0.7} fos="$1">
                 Offline: showing your saved titles from this device. Progress and
                 any changes from other devices will sync when you reconnect.
