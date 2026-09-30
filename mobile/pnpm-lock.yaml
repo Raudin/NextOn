@@ -137,7 +137,7 @@ importers:
         version: 57.0.2(eslint@9.39.5(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
       eslint-plugin-react:
         specifier: 7.37.5
-        version: 7.37.5
+        version: 7.37.5(eslint@9.39.5(supports-color@8.1.1))
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@26.6.1)(supports-color@8.1.1)

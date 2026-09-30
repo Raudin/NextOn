@@ -52,11 +52,6 @@
     "jest-expo": "~57.0.5",
     "typescript": "~6.0.3"
   },
-  "pnpm": {
-    "overrides": {
-      "thinking-orbs": "0.3.1"
-    }
-  },
   "scripts": {
     "start": "expo start",
     "postinstall": "node ./scripts/link-packages.mjs",
@@ -65,7 +60,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "jest"
+    "test": "jest",
+    "check:lockfile": "pnpm install --dry-run --frozen-lockfile"
   },
   "private": true
 }
