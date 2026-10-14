@@ -1,32 +1,13 @@
 import React from "react";
 import { StyleSheet } from "react-native";
-// Per-icon entry points (`./icons/*` in the package's exports map): the root
-// barrel re-exports every icon and Metro does not tree-shake. `LucideIcon` is a
-// type only, erased at build time, and is not exported from that subpath.
-import Clock from "lucide-react-native/icons/clock";
-import Flame from "lucide-react-native/icons/flame";
-import Film from "lucide-react-native/icons/film";
-import Star from "lucide-react-native/icons/star";
-import Tv from "lucide-react-native/icons/tv";
-import { type LucideIcon } from "lucide-react-native";
 import { Text, XStack, YStack } from "tamagui";
 import { type ProfileStats } from "@/lib/media-api";
-import {
-  Group,
-  IconTile,
-  LIST_ROW_GAP,
-  LIST_ROW_PADDING,
-  SectionHeader,
-  Separator,
-} from "@/components/Profile/grouped-list";
 
 interface StatsGridProps {
   stats: ProfileStats;
 }
 
-const XP_PER_LEVEL = 1000;
-
-function formatWatchTime(totalMinutes: number): string {
+export function formatWatchTime(totalMinutes: number): string {
   const minutes = Math.max(0, Math.round(totalMinutes || 0));
   if (minutes < 60) return `${minutes}m`;
 
@@ -35,117 +16,98 @@ function formatWatchTime(totalMinutes: number): string {
   return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
 }
 
-interface StatRow {
-  label: string;
+interface StatCardData {
+  id: string;
   value: string | number;
-  icon: LucideIcon;
-  tint: string;
-}
-
-function StatRowView({ row }: { row: StatRow }) {
-  return (
-    <XStack ai="center" gap={LIST_ROW_GAP} px={LIST_ROW_PADDING} minHeight={52}>
-      <IconTile icon={row.icon} tint={row.tint} />
-      <Text f={1} color="$color" fos="$3" numberOfLines={1}>
-        {row.label}
-      </Text>
-      <Text
-        color="$color"
-        opacity={0.6}
-        fow="700"
-        fos="$3"
-        numberOfLines={1}
-        style={styles.value}
-      >
-        {row.value}
-      </Text>
-    </XStack>
-  );
+  label: string;
 }
 
 export default function StatsGrid({ stats }: StatsGridProps) {
-  const xpInLevel = Math.max(0, (stats.current_xp || 0) % XP_PER_LEVEL);
-  const levelProgress = Math.min(1, Math.max(0, xpInLevel / XP_PER_LEVEL));
-
-  const rows: StatRow[] = [
+  const cards: StatCardData[] = [
     {
-      label: "Movies watched",
-      value: stats.total_movies_watched,
-      icon: Film,
-      tint: "#AF52DE",
-    },
-    {
-      label: "Episodes watched",
+      id: "episodes",
       value: stats.total_episodes_watched,
-      icon: Tv,
-      tint: "#007AFF",
+      label: "Watched episodes",
     },
     {
-      label: "Watch time",
+      id: "movies",
+      value: stats.total_movies_watched,
+      label: "Watched movies",
+    },
+    {
+      id: "watch_time",
       value: formatWatchTime(stats.total_watch_time_minutes),
-      icon: Clock,
-      tint: "#34C759",
+      label: "Total time",
     },
     {
-      label: "Current streak",
+      id: "streak",
       value: `${stats.streak_days} ${stats.streak_days === 1 ? "day" : "days"}`,
-      icon: Flame,
-      tint: "#FF9500",
+      label: "Current streak",
     },
   ];
 
   return (
-    <YStack gap={10} w="100%">
-      <SectionHeader>Your activity</SectionHeader>
+    <YStack gap="$3" w="100%">
+      {/* Header: Clean title, deliberately NO 'View all' */}
+      <XStack ai="center" jc="space-between">
+        <Text color="$color" fow="900" fos="$6">
+          Stats
+        </Text>
+      </XStack>
 
-      <Group>
-        {rows.map((row, index) => (
-          <React.Fragment key={row.label}>
-            {index > 0 ? <Separator /> : null}
-            <StatRowView row={row} />
-          </React.Fragment>
-        ))}
-      </Group>
-
-      <Group>
-        <XStack
-          ai="center"
-          gap={LIST_ROW_GAP}
-          px={LIST_ROW_PADDING}
-          pt={LIST_ROW_PADDING}
-          pb={10}
-        >
-          <IconTile icon={Star} tint="#AF52DE" />
-          <Text f={1} color="$color" fos="$3" numberOfLines={1}>
-            Level {stats.current_level}
-          </Text>
-          <Text
-            color="$color"
-            opacity={0.6}
-            fow="700"
-            fos="$3"
-            numberOfLines={1}
-            style={styles.value}
-          >
-            {xpInLevel}/{XP_PER_LEVEL} XP
-          </Text>
+      {/* 2x2 Grid of Cards */}
+      <YStack gap="$2.5" w="100%">
+        <XStack gap="$2.5" w="100%">
+          <StatCardItem card={cards[0]} />
+          <StatCardItem card={cards[1]} />
         </XStack>
+        <XStack gap="$2.5" w="100%">
+          <StatCardItem card={cards[2]} />
+          <StatCardItem card={cards[3]} />
+        </XStack>
+      </YStack>
+    </YStack>
+  );
+}
 
-        <YStack px={LIST_ROW_PADDING} pb={LIST_ROW_PADDING}>
-          <YStack h={4} br={2} bg="$background" overflow="hidden" w="100%">
-            <YStack
-              h="100%"
-              w={`${Math.max(2, levelProgress * 100)}%`}
-              bg="$purple9"
-              br={2}
-            />
-          </YStack>
-        </YStack>
-      </Group>
+function StatCardItem({ card }: { card: StatCardData }) {
+  return (
+    <YStack
+      f={1}
+      bg="$backgroundElement"
+      borderWidth={1}
+      borderColor="$borderColor"
+      borderRadius="$4"
+      borderCurve="continuous"
+      p="$3.5"
+      jc="center"
+      minHeight={90}
+      gap="$1"
+    >
+      <Text
+        color="$color"
+        fow="900"
+        fos="$7"
+        numberOfLines={1}
+        style={styles.numericValue}
+      >
+        {card.value}
+      </Text>
+      <Text
+        color="$color"
+        opacity={0.55}
+        fow="600"
+        fos="$2"
+        numberOfLines={1}
+      >
+        {card.label}
+      </Text>
     </YStack>
   );
 }
 
 const styles = StyleSheet.create({
-  value: { fontVariant: ["tabular-nums"] },
+  numericValue: {
+    fontVariant: ["tabular-nums"],
+  },
 });

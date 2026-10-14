@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { Platform, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   YStack,
   Text,
@@ -10,10 +9,8 @@ import {
 import { useAuth } from "@/context/AuthContext";
 
 import ProfileHeader from "@/components/Profile/ProfileHeader";
+import LevelCard from "@/components/Profile/LevelCard";
 import StatsGrid from "@/components/Profile/StatsGrid";
-import WatchActivityGraph, {
-  countWatchedByDay,
-} from "@/components/Profile/WatchActivityGraph";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
 import DiagnosticsSection from "@/components/Profile/DiagnosticsSection";
 import LoadingOrb from "@/components/LoadingOrb";
@@ -22,6 +19,7 @@ import { useConfirmDialog } from "@/components/ui/use-confirm-dialog";
 import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { invalidateMediaCaches } from "@/lib/cache";
 import { setTelemetryScreen } from "@/lib/telemetry";
+import { getProfileBannerBackdrop } from "@/lib/profile-banner";
 
 import {
   fetchUserProfile,
@@ -89,15 +87,6 @@ async function saveProfileEdits(
 export default function ProfileScreen() {
   const { token, logout, isLoading: authLoading, themeMode, setThemeMode, updateUser } = useAuth();
   const { replace } = useRouter();
-  const insets = useSafeAreaInsets();
-  /**
-   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
-   * the status-bar inset is applied as padding there. On iOS this stays 0 and
-   * the scroll view handles the inset natively, which is what lets the header
-   * and content scroll *under* the status bar rather than being clipped below
-   * it — the behaviour the old `SafeAreaView` wrapper prevented.
-   */
-  const topInset = Platform.OS === "android" ? insets.top : 0;
 
   /**
    * Starts false, not true.
@@ -111,18 +100,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(false);
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [stats, setStats] = useState<ProfileStats | null>(null);
-  /**
-   * Per-day watch counts, never the history itself.
-   *
-   * The history is the largest payload this screen loads and is refetched on
-   * every focus, but the only thing that consumes it is the activity graph,
-   * which needs a tally and nothing else. Keeping the array would pin every
-   * entry — and every field on every entry — for the whole session, for the
-   * sake of a count.
-   */
-  const [watchActivity, setWatchActivity] = useState<Map<string, number>>(
-    () => new Map()
-  );
+  const [backdropUrl, setBackdropUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   // Edit states
@@ -177,12 +155,15 @@ export default function ProfileScreen() {
       const { data, history } = outcome;
       setProfileUser(data.user);
       setStats(data.stats);
-      // Reduced here, immediately, so the array is never handed to state.
-      setWatchActivity(countWatchedByDay(history));
       setEditName(data.user.name || "");
       setSelectedAvatar(data.user.avatar_url || "");
       // Sync auth context user state if needed
       updateUser(data.user);
+
+      // Resolve weekly cached backdrop banner from recently watched items
+      getProfileBannerBackdrop(history).then((url) => {
+        if (url) setBackdropUrl(url);
+      });
     }
 
     setLoading(false);
@@ -337,46 +318,48 @@ export default function ProfileScreen() {
     <YStack f={1} bg="$background">
       <YStack
         f={1}
-        pt={topInset}
         // Required for the native tab bar's tap-to-scroll-to-top; see the native
         // tabs guide on wrapping a ScrollView.
         collapsable={false}
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
-          // Replaces the SafeAreaView wrapper: iOS insets the scroll content
-          // around the status bar natively, so the content can also scroll
-          // *under* it instead of being clipped below it.
-          contentInsetAdjustmentBehavior="automatic"
+          // Insets the scroll content around the status bar natively so the backdrop
+          // scrolls seamlessly under the top bar
+          contentInsetAdjustmentBehavior="never"
           contentContainerStyle={styles.scrollContent}
         >
-          <YStack px="$4" pt="$2" pb="$5" gap="$5" maxWidth={600} alignSelf="center" w="100%">
+          {/* Full-bleed hero banner and embedded profile identity */}
+          <ProfileHeader
+            profileUser={profileUser}
+            stats={stats}
+            backdropUrl={backdropUrl}
+            isEditing={isEditing}
+            setIsEditing={setIsEditing}
+            editName={editName}
+            setEditName={setEditName}
+            selectedAvatar={selectedAvatar}
+            setSelectedAvatar={setSelectedAvatar}
+            updating={updating}
+            onUpdateProfileDetails={handleUpdateProfileDetails}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+          />
 
-            {error ? <YStack bg="$red2" p="$3" br="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
+          <YStack px="$4" pt="$3.5" pb="$5" gap="$4" maxWidth={600} alignSelf="center" w="100%">
+            {error ? (
+              <YStack bg="$red2" p="$3" br="$3" pressStyle={{ opacity: 0.8 }} onPress={() => setError(null)}>
                 <Text color="$red10" fow="bold" ta="center">{error}</Text>
                 <Text color="$red8" fos="$1" ta="center" mt="$1">Tap to dismiss</Text>
-              </YStack> : null}
+              </YStack>
+            ) : null}
 
-            <ProfileHeader
-              profileUser={profileUser}
-              stats={stats}
-              isEditing={isEditing}
-              setIsEditing={setIsEditing}
-              editName={editName}
-              setEditName={setEditName}
-              selectedAvatar={selectedAvatar}
-              setSelectedAvatar={setSelectedAvatar}
-              updating={updating}
-              onUpdateProfileDetails={handleUpdateProfileDetails}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-            />
+            {/* Level Card with circular SVG progress ring */}
+            <LevelCard stats={stats} />
 
+            {/* 4-Stat Grid (No View All) */}
             <StatsGrid stats={stats} />
 
-            <WatchActivityGraph dailyCounts={watchActivity} />
-
             {__DEV__ ? <DiagnosticsSection /> : null}
-
           </YStack>
         </ScrollView>
       </YStack>

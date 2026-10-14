@@ -46,12 +46,16 @@ export default function EpisodeDetailScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
   /**
-   * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
-   * the status-bar inset is applied as padding there. On iOS the scroll view
-   * handles it and this stays 0, so the still can scroll under the status bar
-   * rather than being clipped below it. Same pattern as `(tabs)/profile.tsx`.
+   * How far the back button has to stay clear of the status bar, with a floor on
+   * Android where an edge-to-edge window can report no inset at all.
+   *
+   * The still above it is full-bleed: the scroll view no longer insets its
+   * content (`contentInsetAdjustmentBehavior="never"` below), so the artwork
+   * starts at y=0 with the camera cutout over it, and this value is the *only*
+   * thing keeping the button out from under the status bar. Same pattern as
+   * `(tabs)/profile.tsx` and the media-detail screen.
    */
-  const topInset = Platform.OS === "android" ? insets.top : 0;
+  const topInset = Math.max(insets.top, Platform.OS === "android" ? 16 : 0);
   /**
    * Lucide icons take a resolved colour rather than a theme token, so the two
    * states of the watched button's check read the active theme here — the same
@@ -217,7 +221,7 @@ export default function EpisodeDetailScreen() {
 
   return (
     <YStack f={1} bg="$background">
-      <YStack f={1} pt={topInset}>
+      <YStack f={1}>
         {showLoadingUI ? (
           <LoadingOrb label="Loading episode..." />
         ) : error ? (
@@ -230,8 +234,12 @@ export default function EpisodeDetailScreen() {
         ) : episode ? (
           <ScrollView
             showsVerticalScrollIndicator={false}
-            // Replaces the SafeAreaView wrapper; see `(tabs)/profile.tsx`.
-            contentInsetAdjustmentBehavior="automatic"
+            // `never`, not `automatic`: the still has to start at the very top of
+            // the screen so the camera cutout sits over it. iOS would otherwise
+            // inset the scroll content around the status bar, which is what used
+            // to push the artwork down; the back button carries that inset
+            // instead — see `topInset`.
+            contentInsetAdjustmentBehavior="never"
             contentContainerStyle={{ paddingBottom: 120 }}
           >
             {/*
@@ -259,7 +267,12 @@ export default function EpisodeDetailScreen() {
                 </YStack>
               )}
 
-              <YStack pos="absolute" t={0} l={0} r={0} p="$4">
+              {/*
+                The still is drawn from y=0, so the button takes the inset the
+                screen-wide padding used to apply for it; `p="$4"` still supplies
+                its usual gap below it.
+              */}
+              <YStack pos="absolute" t={topInset} l={0} r={0} p="$4">
                 <BackButton onPress={() => back()} />
               </YStack>
             </YStack>
