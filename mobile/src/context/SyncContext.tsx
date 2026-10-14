@@ -29,16 +29,39 @@ import { useAuth } from "@/context/AuthContext";
  * runs: a second concurrent pass could replay the outbox twice.
  */
 
-interface SyncContextValue {
+/**
+ * Two contexts, not one.
+ *
+ * These values change on very different clocks. `isSyncing` and `lastError`
+ * flip several times per sync, and sync runs on mount, on every foreground and
+ * on a 30s timer while anything is queued. `pendingCount` changes only when the
+ * queue actually does.
+ *
+ * Holding them together meant every consumer re-rendered on every one of those
+ * transitions, and the consumers are Home and Watchlist — the two screens that
+ * sit on `usePendingOverlay`, which needs the queue and has no use for a syncing
+ * flag. With the contexts split, a sync in progress no longer re-renders either
+ * screen; only a real queue change does.
+ *
+ * The React Compiler is enabled (app.json), so the object literal below is not
+ * the problem it would otherwise be — the cost being removed here is genuine
+ * re-rendering driven by values a consumer never reads, not the identity of a
+ * context value.
+ */
+interface SyncStatusValue {
   isSyncing: boolean;
   lastSyncedAt: number | null;
   lastError: string | null;
-  /** Mutations still waiting to reach the server. */
-  pendingCount: number;
   syncNow: () => Promise<void>;
 }
 
-const SyncContext = createContext<SyncContextValue | undefined>(undefined);
+interface SyncQueueValue {
+  /** Mutations still waiting to reach the server. */
+  pendingCount: number;
+}
+
+const SyncStatusContext = createContext<SyncStatusValue | undefined>(undefined);
+const SyncQueueContext = createContext<SyncQueueValue | undefined>(undefined);
 
 /** Retry cadence while the outbox is non-empty. */
 const RETRY_INTERVAL_MS = 30_000;
@@ -131,19 +154,54 @@ export const SyncProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => clearInterval(timer);
   }, [pendingCount, syncNow, token]);
 
+  const statusValue: SyncStatusValue = { isSyncing, lastSyncedAt, lastError, syncNow };
+  const queueValue: SyncQueueValue = { pendingCount };
+
   return (
-    <SyncContext.Provider
-      value={{ isSyncing, lastSyncedAt, lastError, pendingCount, syncNow }}
-    >
-      {children}
-    </SyncContext.Provider>
+    <SyncStatusContext.Provider value={statusValue}>
+      <SyncQueueContext.Provider value={queueValue}>
+        {children}
+      </SyncQueueContext.Provider>
+    </SyncStatusContext.Provider>
   );
 };
 
-export function useSync(): SyncContextValue {
-  const context = useContext(SyncContext);
+/**
+ * Sync progress and control.
+ *
+ * Use this only where a syncing indicator or diagnostics are actually rendered.
+ */
+export function useSyncStatus(): SyncStatusValue {
+  const context = useContext(SyncStatusContext);
   if (context === undefined) {
-    throw new Error("useSync must be used within a SyncProvider");
+    throw new Error("useSyncStatus must be used within a SyncProvider");
   }
   return context;
+}
+
+/**
+ * The pending-mutation count alone.
+ *
+ * Preferred by anything that only cares whether work is queued, so that it is
+ * not re-rendered by an unrelated sync transition.
+ */
+export function useSyncQueue(): SyncQueueValue {
+  const context = useContext(SyncQueueContext);
+  if (context === undefined) {
+    throw new Error("useSyncQueue must be used within a SyncProvider");
+  }
+  return context;
+}
+
+/**
+ * Both halves.
+ *
+ * Kept for callers that genuinely need progress and queue together (the
+ * diagnostics panel). Anything that needs only one of them should use the
+ * narrower hook above.
+ */
+export function useSync(): SyncStatusValue & SyncQueueValue {
+  const status = useSyncStatus();
+  const queue = useSyncQueue();
+  return { ...status, ...queue };
 }

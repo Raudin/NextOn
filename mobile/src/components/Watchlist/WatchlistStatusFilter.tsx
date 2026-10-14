@@ -1,9 +1,10 @@
-import {
-  CalendarClock,
-  CheckCheck,
-  CirclePlay,
-  type LucideIcon,
-} from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake. `LucideIcon` is a
+// type only, erased at build time, and is not exported from that subpath.
+import CalendarClock from "lucide-react-native/icons/calendar-clock";
+import CheckCheck from "lucide-react-native/icons/check-check";
+import CirclePlay from "lucide-react-native/icons/circle-play";
+import { type LucideIcon } from "lucide-react-native";
 import { ScrollView } from "react-native";
 import { Text, useTheme, XStack } from "tamagui";
 

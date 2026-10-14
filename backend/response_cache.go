@@ -63,20 +63,32 @@ func cachedJSONResponse(c *gin.Context, key string, ttl time.Duration, build fun
 // homeScheduleCacheKey scopes the cached schedule to a user and their current
 // sync version, so any mutation retires the entry without a scan.
 func homeScheduleCacheKey(userID uint) string {
+	return homeScheduleCacheKeyAt(userID, currentUserVersion(userID))
+}
+
+// homeScheduleCacheKeyAt is homeScheduleCacheKey for a version already in hand.
+// The request path uses this so the version is read once per request rather
+// than once per cache key.
+func homeScheduleCacheKeyAt(userID uint, version uint64) string {
 	return redisNamedKey(
 		"home",
 		strconv.FormatUint(uint64(userID), 10),
-		strconv.FormatUint(currentUserVersion(userID), 10),
+		strconv.FormatUint(version, 10),
 	)
 }
 
 // watchlistCacheKey scopes the cached watchlist the same way, and includes the
 // query variants so `filter_watched` and `include=progress` cannot collide.
 func watchlistCacheKey(userID uint, filterWatched, includeProgress bool) string {
+	return watchlistCacheKeyAt(userID, currentUserVersion(userID), filterWatched, includeProgress)
+}
+
+// watchlistCacheKeyAt is watchlistCacheKey for a version already in hand.
+func watchlistCacheKeyAt(userID uint, version uint64, filterWatched, includeProgress bool) string {
 	return redisNamedKey(
 		"watchlist",
 		strconv.FormatUint(uint64(userID), 10),
-		strconv.FormatUint(currentUserVersion(userID), 10),
+		strconv.FormatUint(version, 10),
 		boolFlag(filterWatched),
 		boolFlag(includeProgress),
 	)

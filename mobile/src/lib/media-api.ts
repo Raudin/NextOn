@@ -1,10 +1,12 @@
 import {
+  beginNewSession,
   configureHttp,
   requestJson,
   requestJsonCached,
   type RequestOptions,
 } from "@/lib/http";
 import { mutateWithOutboxFallback } from "@/lib/mutations";
+import { cache } from "@/lib/cache";
 
 // Image sizing now lives in `lib/images.ts`, keyed by the role the artwork plays
 // (list cell, grid card, hero backdrop, ...). The old fixed `w500`/`w780` base
@@ -225,6 +227,10 @@ let authToken: string | null = null;
 
 export function setApiToken(token: string | null) {
   authToken = token;
+  // The credentials just changed, so this is a new session: the 401 latch must
+  // be able to fire again, and any request still in flight from the previous
+  // session must not be allowed to publish into this one's cache.
+  beginNewSession();
   configureHttp({ getToken: () => authToken, onUnauthorized: handleUnauthorized });
 }
 
@@ -468,6 +474,50 @@ export const fetchWatchlist = (options?: {
     params.set("filter_watched", "true");
   }
   return apiFetch<TMDBMedia[]>(`/api/watchlist?${params.toString()}`);
+};
+
+/**
+ * Cache key for the derived set of watchlist media ids.
+ *
+ * Membership is all the Discover carousels and the detail screen's toggle need,
+ * but both used to call `fetchWatchlist()` — downloading every field of every
+ * row, with no conditional request — purely to build an id Set. On a
+ * sixty-title watchlist that is the largest payload either screen pulled, from
+ * a cold start, on every focus.
+ */
+const WATCHLIST_IDS_KEY = "watchlist_ids";
+
+/** The cached id set, if some screen has already loaded the watchlist. */
+export const readCachedWatchlistIds = async (): Promise<number[] | null> => {
+  const cached = await cache.get<number[]>(WATCHLIST_IDS_KEY);
+  return cached ?? null;
+};
+
+/** Records the derived id set so later screens need no network call at all. */
+export const rememberWatchlistIds = async (ids: number[]): Promise<void> => {
+  // Long TTL: this is a derived index, and every write path that changes the
+  // watchlist calls invalidateMediaCaches, which clears it.
+  await cache.set(WATCHLIST_IDS_KEY, ids, WATCHLIST_TTL_MS);
+};
+
+/**
+ * The watchlist media ids, from cache when possible.
+ *
+ * Returns the derived set without a request when one is already known, which is
+ * the common case: the Watchlist screen populates it, and the mutation paths
+ * update or clear it. On a cold cache it does one conditional request for the
+ * full list and derives the set from it.
+ */
+export const fetchWatchlistIds = async (): Promise<number[]> => {
+  const cached = await readCachedWatchlistIds();
+  if (cached) {
+    return cached;
+  }
+
+  const items = await fetchWatchlist();
+  const ids = items.map((item) => item.id);
+  await rememberWatchlistIds(ids);
+  return ids;
 };
 
 // ------------------------------------------------------------------ delta sync

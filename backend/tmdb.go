@@ -5,25 +5,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
-var discoverCache *Cache
-
-func initCache() {
-	discoverCache = &Cache{
-		duration: 10 * time.Minute,
-	}
+// tmdbTransport is a shared, explicitly tuned transport.
+//
+// The default transport keeps only two idle connections per host. Concurrency
+// here is tmdbDetailConcurrency (10) plus whatever the background rating
+// workers add, so under any real load the surplus connections were closed and
+// re-opened constantly — paying a fresh TLS handshake on each one. Raising the
+// per-host idle pool to match the concurrency cap means a connection is
+// normally reused instead.
+//
+// ForceAttemptHTTP2 is set explicitly rather than left to the default, because
+// a custom Transport with a non-nil DialContext disables HTTP/2 unless it is
+// asked for.
+var tmdbTransport = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          64,
+	MaxIdleConnsPerHost:   32,
+	MaxConnsPerHost:       0,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   5 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
 }
 
-// Shared TMDB HTTP client. Reusing a single client (with its default pooled
-// transport) avoids opening a fresh connection + TLS handshake per request.
+// Shared TMDB HTTP client. Reusing a single client (and its pooled transport)
+// avoids opening a fresh connection + TLS handshake per request.
 var tmdbHTTPClient = &http.Client{
-	Timeout: 8 * time.Second,
+	Transport: tmdbTransport,
+	Timeout:   8 * time.Second,
 }
 
 // tmdbCacheTTL is how long TMDB responses are kept in memory. Air/release
@@ -31,11 +54,21 @@ var tmdbHTTPClient = &http.Client{
 // is safe while still bounding staleness for "upcoming" schedule data.
 const tmdbCacheTTL = 30 * time.Minute
 
-// tmdbCacheEntry stores a raw TMDB response body and its expiry time.
-type tmdbCacheEntry struct {
-	data      []byte
-	expiresAt time.Time
-}
+// Cache capacities, in entries. Bounded by count rather than by bytes: the
+// previous implementation had to sum the size of every stored body to enforce a
+// byte ceiling and, when it overflowed, threw the entire cache away — so one
+// oversized response cost every other entry and the next requests all missed.
+// An LRU evicts the least recently useful entry instead.
+const (
+	// tmdbCacheEntries covers media details, seasons, episodes, collections and
+	// similar/recommendation lists.
+	tmdbCacheEntries = 4096
+
+	// tmdbSearchEntries is deliberately its own small cache. Search keys are
+	// unique per keystroke, so letting them share the main cache let a burst of
+	// typing evict the titles the app actually re-requests.
+	tmdbSearchEntries = 256
+)
 
 // inflightCall coalesces concurrent requests for the same URL so only one
 // network fetch happens; all other callers wait for its result.
@@ -45,71 +78,44 @@ type inflightCall struct {
 	err  error
 }
 
-// tmdbResponseCache is a bounded, in-memory TTL cache of TMDB GET responses
+// tmdbResponseCache is a bounded, TTL'd in-memory cache of TMDB GET responses
 // keyed by the full request URL.
+//
+// The TTL is enforced by the expirable LRU itself, so an expired entry can
+// never be returned and no sweep is needed. Search responses are routed to a
+// separate, smaller cache; see tmdbSearchEntries.
 type tmdbResponseCache struct {
-	mu         sync.Mutex
-	entries    map[string]*tmdbCacheEntry
+	detail *expirable.LRU[string, []byte]
+	search *expirable.LRU[string, []byte]
+
+	// inflight guards coalescing only. It is the single mutex, so a cache read
+	// no longer takes a lock that a concurrent fetch is holding.
+	inflightMu sync.Mutex
 	inflight   map[string]*inflightCall
-	maxBytes   int64
-	totalBytes int64
 }
 
 var tmdbCache = &tmdbResponseCache{
-	entries:    make(map[string]*tmdbCacheEntry),
-	inflight:   make(map[string]*inflightCall),
-	maxBytes:   128 << 20, // ~128 MB ceiling for cached TMDB response bodies
-	totalBytes: 0,
+	detail:   expirable.NewLRU[string, []byte](tmdbCacheEntries, nil, tmdbCacheTTL),
+	search:   expirable.NewLRU[string, []byte](tmdbSearchEntries, nil, tmdbCacheTTL),
+	inflight: make(map[string]*inflightCall),
+}
+
+// cacheFor routes a key to the cache that should hold it. Search responses are
+// high-cardinality and low-reuse, so they get their own small cache rather than
+// evicting detail responses other requests will want again.
+func (c *tmdbResponseCache) cacheFor(key string) *expirable.LRU[string, []byte] {
+	if strings.Contains(key, "/search/") {
+		return c.search
+	}
+	return c.detail
 }
 
 func (c *tmdbResponseCache) get(key string) ([]byte, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	e, ok := c.entries[key]
-	if !ok {
-		return nil, false
-	}
-	if time.Now().After(e.expiresAt) {
-		c.totalBytes -= int64(len(e.data))
-		delete(c.entries, key)
-		return nil, false
-	}
-	return e.data, true
+	return c.cacheFor(key).Get(key)
 }
 
 func (c *tmdbResponseCache) set(key string, data []byte) {
-	if int64(len(data)) > c.maxBytes {
-		return
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-
-	// Opportunistically evict expired entries.
-	for k, e := range c.entries {
-		if now.After(e.expiresAt) {
-			c.totalBytes -= int64(len(e.data))
-			delete(c.entries, k)
-		}
-	}
-
-	// Keep the cache bounded: reset it if the new entry would overflow the cap.
-	if c.totalBytes+int64(len(data)) > c.maxBytes {
-		c.entries = make(map[string]*tmdbCacheEntry)
-		c.totalBytes = 0
-	}
-
-	if old, ok := c.entries[key]; ok {
-		c.totalBytes -= int64(len(old.data))
-	}
-	c.entries[key] = &tmdbCacheEntry{
-		data:      data,
-		expiresAt: now.Add(tmdbCacheTTL),
-	}
-	c.totalBytes += int64(len(data))
+	c.cacheFor(key).Add(key, data)
 }
 
 // getOrFetch returns the cached body for key or performs a single network
@@ -136,9 +142,9 @@ func (c *tmdbResponseCache) getOrFetch(key string, fetch func() ([]byte, error))
 		return data, false, nil
 	}
 
-	c.mu.Lock()
+	c.inflightMu.Lock()
 	if call, ok := c.inflight[key]; ok {
-		c.mu.Unlock()
+		c.inflightMu.Unlock()
 		<-call.done
 		// Another caller already performed this fetch; we just read its result.
 		metrics.recordTMDB(true)
@@ -146,14 +152,20 @@ func (c *tmdbResponseCache) getOrFetch(key string, fetch func() ([]byte, error))
 	}
 	call := &inflightCall{done: make(chan struct{})}
 	c.inflight[key] = call
-	c.mu.Unlock()
+	c.inflightMu.Unlock()
 
+	// Deferred, not sequential: this is a coalescing barrier, so every waiter
+	// is parked on this channel. If fetch() panicked, the close was skipped and
+	// those waiters blocked forever — a panic in one request turned into a
+	// permanent hang for every other request for the same key. The deferred
+	// close releases them as the panic unwinds, and gin's Recovery middleware
+	// then fails only the request that panicked.
+	defer close(call.done)
 	call.data, call.err = fetch()
-	close(call.done)
 
-	c.mu.Lock()
+	c.inflightMu.Lock()
 	delete(c.inflight, key)
-	c.mu.Unlock()
+	c.inflightMu.Unlock()
 
 	if call.err == nil {
 		c.set(key, call.data)

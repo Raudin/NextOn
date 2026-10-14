@@ -9,7 +9,7 @@ import {
   recordMutationAttempt,
 } from "@/lib/db/outbox";
 import { fetchSyncChanges, type SyncOp } from "@/lib/media-api";
-import { requestJson } from "@/lib/http";
+import { isOfflineError, requestJson } from "@/lib/http";
 
 /**
  * Delta sync.
@@ -59,6 +59,16 @@ export const setStoredSyncVersion = async (version: number): Promise<void> => {
 };
 
 /**
+ * The entity key the server uses for a whole-collection delete.
+ *
+ * Mirrors `syncCollectionDeleteKey` in the backend's sync.go: a change-log
+ * entry with this key means "this entire collection was cleared", which is how
+ * clear-history is delivered, since it removes an unbounded number of rows that
+ * cannot be enumerated as individual keys.
+ */
+export const COLLECTION_DELETE_KEY = "*";
+
+/**
  * Splits a change-log entity key back into its parts.
  *
  * The key is produced by the server and is the authoritative identity for a
@@ -93,14 +103,23 @@ const safeJson = (payload?: string): Record<string, any> => {
 
 /** Applies one remote change to the matching local table. */
 export async function applySyncOp(db: SQLite.SQLiteDatabase, op: SyncOp): Promise<void> {
-  const { mediaType, mediaId, season, episode } = parseEntityKey(op.entity_key);
-
   const table =
     op.collection === "favorites"
       ? "favorites"
       : op.collection === "watched"
         ? "watched"
         : "watchlist";
+
+  // A collection-level delete means the server cleared the whole collection
+  // ("clear watch history"), not one row. There is no media identity to parse
+  // out of the key, so handle it before parseEntityKey turns "*" into a
+  // meaningless `movie:0` and deletes nothing.
+  if (op.op_type === "delete" && op.entity_key === COLLECTION_DELETE_KEY) {
+    await db.runAsync(`DELETE FROM ${table}`);
+    return;
+  }
+
+  const { mediaType, mediaId, season, episode } = parseEntityKey(op.entity_key);
 
   if (op.op_type === "delete") {
     if (table === "watched") {
@@ -167,10 +186,16 @@ export async function applySyncOp(db: SQLite.SQLiteDatabase, op: SyncOp): Promis
 /**
  * Replays queued mutations in order.
  *
- * Stops at the first transport failure — replaying later entries out of order
- * could apply a removal before its matching add. An entry that keeps failing is
- * discarded after `MAX_OUTBOX_ATTEMPTS` so a single bad mutation cannot block
- * every later one forever.
+ * Stops at the first *transport* failure — replaying later entries out of order
+ * could apply a removal before its matching add, and a request that never
+ * reached the server is the one case where retrying later can help.
+ *
+ * A rejected mutation is discarded instead of stopping the drain. The server
+ * answered, so the entry is permanently invalid (a 400 from a body shape that
+ * has since changed, a 404 for a title that no longer exists, a 409 from a
+ * conflict). Treating that like a dropped connection used to stall every later
+ * mutation behind it for up to MAX_OUTBOX_ATTEMPTS cycles — a single poisoned
+ * entry froze the whole queue, including mutations that would have succeeded.
  */
 export const drainOutbox = async (): Promise<number> => {
   const pending = await listPendingMutations();
@@ -189,6 +214,19 @@ export const drainOutbox = async (): Promise<number> => {
       await deleteMutation(entry.id);
       pushed += 1;
     } catch (error) {
+      // The server answered with an error: this entry will never succeed, so
+      // drop it and keep the rest of the queue moving.
+      if (!isOfflineError(error)) {
+        if (__DEV__) {
+          console.warn(
+            `[sync] Discarding rejected ${entry.method} ${entry.path}:`,
+            error,
+          );
+        }
+        await deleteMutation(entry.id);
+        continue;
+      }
+
       const attempts = await recordMutationAttempt(entry.id);
 
       if (attempts >= MAX_OUTBOX_ATTEMPTS) {
@@ -208,6 +246,7 @@ export const drainOutbox = async (): Promise<number> => {
           error,
         );
       }
+      // Still offline. Order matters, so stop here rather than skipping ahead.
       break;
     }
   }
@@ -230,8 +269,13 @@ export const pullDelta = async (): Promise<{ applied: number; resynced: boolean 
     // The cursor is older than the server's retained change log, so a partial
     // delta would leave the local copy subtly wrong. Discard and restart from
     // the new version; the screens refetch their payloads.
-    await db.withTransactionAsync(async () => {
-      await db.execAsync(
+    //
+    // Exclusive, with the statements on the transaction handle: a shared-handle
+    // rollback here could take an unrelated concurrent write down with it, and
+    // a half-applied resync is exactly the inconsistent state this branch
+    // exists to avoid.
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.execAsync(
         "DELETE FROM watchlist; DELETE FROM favorites; DELETE FROM watched;",
       );
     });
@@ -243,9 +287,12 @@ export const pullDelta = async (): Promise<{ applied: number; resynced: boolean 
   const changes = delta.changes ?? [];
 
   if (changes.length > 0) {
-    await db.withTransactionAsync(async () => {
+    // All of a delta or none of it. Applying half the changes and then failing
+    // would leave the local copy disagreeing with the cursor that is stored
+    // below, so the next pull would skip the changes that were never applied.
+    await db.withExclusiveTransactionAsync(async (txn) => {
       for (const op of changes) {
-        await applySyncOp(db, op);
+        await applySyncOp(txn, op);
       }
     });
     // Remote changes mean this device's cached payloads are behind, so drop

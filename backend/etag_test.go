@@ -1,12 +1,27 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// pinnedClockRequest builds a request whose validator clock is fixed.
+//
+// The entity tag now embeds a 60 second clock bucket so that external change
+// (a calendar day rolling over, an episode airing) cannot be masked by a 304
+// forever. Without pinning, a test that issues two requests and asserts the
+// second is a 304 would fail roughly whenever the suite crossed a minute
+// boundary mid-test — a rare, unreproducible failure. Pinning removes the
+// timing dependency without weakening what the test asserts.
+func pinnedClockRequest(method, path string, at time.Time) *http.Request {
+	request := httptest.NewRequest(method, path, nil)
+	return request.WithContext(context.WithValue(request.Context(), requestClockKey, at))
+}
 
 func TestETagMatchesWeakComparison(t *testing.T) {
 	cases := []struct {
@@ -207,8 +222,10 @@ func TestVersionedETagShortCircuitsHandler(t *testing.T) {
 		})
 
 	// First request: the handler runs and an ETag is issued.
+	pinnedClock := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+
 	first := httptest.NewRecorder()
-	r.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/home/schedule", nil))
+	r.ServeHTTP(first, pinnedClockRequest(http.MethodGet, "/api/home/schedule", pinnedClock))
 	if handlerCalls != 1 {
 		t.Fatalf("expected the handler to run once, ran %d times", handlerCalls)
 	}
@@ -218,7 +235,7 @@ func TestVersionedETagShortCircuitsHandler(t *testing.T) {
 	}
 
 	// Conditional request at the same version: 304 and the handler is skipped.
-	request := httptest.NewRequest(http.MethodGet, "/api/home/schedule", nil)
+	request := pinnedClockRequest(http.MethodGet, "/api/home/schedule", pinnedClock)
 	request.Header.Set("If-None-Match", etag)
 
 	second := httptest.NewRecorder()

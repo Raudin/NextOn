@@ -64,6 +64,29 @@ export default function MediaCarousel({
             />
           )}
           keyExtractor={(item) => `${title}-${item.id}`}
+          /*
+           * The watchlist ids are read by `renderItem` but are neither `data`
+           * nor anything else FlashList can see, so they are declared here.
+           *
+           * They do currently reach the badges, by a route that is easy to
+           * miss: `renderItem` is an inline arrow over `watchlistIds`, and the
+           * two callbacks it closes over (`onOpen`, `onToggle` in
+           * `app/(tabs)/discover.tsx`) are rebuilt on every render — so the
+           * closure is fresh each time and cannot be stale. Declaring the set
+           * makes the dependency explicit rather than an accident of two other
+           * functions' identities. If either callback is ever memoised,
+           * `renderItem` becomes stable, the stale closure becomes real, and
+           * this prop is what already covers it.
+           *
+           * Note that this does *not* reduce re-renders: declaring the ids is
+           * exactly what tells FlashList the cells have to be redrawn when they
+           * change. It is a correctness guard, not a performance one.
+           *
+           * `MediaCard` itself is left unwrapped. React Compiler already
+           * memoises its JSX against its props, so `React.memo` would add a
+           * comparison on top of a comparison without changing what renders.
+           */
+          extraData={watchlistIds}
           ItemSeparatorComponent={CardGap}
           showsHorizontalScrollIndicator={false}
           // Cards have fixed widths (130 or 260), so a modest look-ahead is

@@ -1,5 +1,7 @@
 import React from "react";
 import { StyleSheet } from "react-native";
+// Type-only: erased at build time, and `LucideIcon` is not exported from the
+// package's per-icon subpath (`./icons/*`).
 import { type LucideIcon } from "lucide-react-native";
 import { Text, XStack, YStack } from "tamagui";
 

@@ -43,6 +43,18 @@ export interface BorderBeamProps {
   active?: boolean;
 
   /**
+   * Whether the beam is on screen at all — e.g. `useIsFocused()` from a screen
+   * that stays mounted after it loses focus. While `false` the animation clock
+   * is unregistered, so an off-screen beam costs nothing per frame.
+   *
+   * Distinct from `active`, which drives the fade: a beam can be active but not
+   * visible, and would otherwise keep ticking behind another screen.
+   *
+   * @default true
+   */
+  visible?: boolean;
+
+  /**
    * Border radius in pixels. Unlike the web version there is no auto-detection
    * from the child — pass the wrapped component's radius explicitly.
    * Falls back to the size preset default.

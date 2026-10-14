@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,13 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 	scope := scopeFrom(c)
 	var details *MediaDetails
 
+	// servedFallback marks a response built from placeholder data. Such a
+	// response must not be stored by any shared cache: these routes carry a
+	// public caching policy, so without this a CDN could keep serving fake
+	// titles as if they were TMDB's for the whole max-age window, long after
+	// TMDB recovered.
+	servedFallback := false
+
 	if apiKey == "dummy" {
 		var ok bool
 		details, ok = getMockMediaDetails(mediaType, id)
@@ -96,6 +104,7 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			"include_image_language": "en,null",
 		}, &response, scope); err != nil {
 			log.Printf("Error fetching TMDB media details for %s/%d: %v. Falling back to mock.", mediaType, id, err)
+			servedFallback = true
 			var ok bool
 			details, ok = getMockMediaDetails(mediaType, id)
 			if !ok {
@@ -117,13 +126,37 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 			if len(date) >= 4 {
 				year = date[:4]
 			}
-			if ratings, found, err := fetchOMDbRatings(getOMDbAPIKey(), title, year, response.ExternalIDs.IMDBID, scope); err == nil {
-				if found {
-					applyOMDbRatings(&detailsVal.TMDBMedia, ratings)
+			// Ratings come from the durable store first.
+			//
+			// This used to call OMDb synchronously on every details view,
+			// before the stored row was even consulted. That put a third-party
+			// round trip (up to the client's 10s timeout) directly in front of
+			// the detail screen and spent the free daily quota re-asking about
+			// titles already answered. The request path now only reads —
+			// exactly like the list endpoints — and anything missing or stale
+			// is filled in by the background rating workers.
+			if row, ok := loadRatings(mediaType, []int64{id})[id]; ok {
+				metrics.recordOMDbStore(true)
+				applyStoredRating(&detailsVal.TMDBMedia, row)
+				if time.Since(row.FetchedAt) >= ratingTTL {
+					title, year := ratingTitleAndYear(detailsVal.TMDBMedia)
+					enqueueRatingRefresh(ratingJob{
+						mediaType: mediaType,
+						mediaID:   id,
+						title:     title,
+						year:      year,
+						imdbID:    response.ExternalIDs.IMDBID,
+					})
 				}
-				// Persist even a negative result so the background worker and
-				// future list requests do not re-query this title.
-				storeRating(mediaType, id, title, year, ratings, found)
+			} else {
+				metrics.recordOMDbStore(false)
+				enqueueRatingRefresh(ratingJob{
+					mediaType: mediaType,
+					mediaID:   id,
+					title:     title,
+					year:      year,
+					imdbID:    response.ExternalIDs.IMDBID,
+				})
 			}
 			detailsVal.Cast = topCast(response.Credits.Cast, 12)
 			// Pick up to 3 English logos
@@ -158,7 +191,18 @@ func fetchAndSendMediaDetails(c *gin.Context, mediaType string) {
 		}
 	}
 
+	if servedFallback {
+		markResponseUncacheable(c)
+	}
 	c.JSON(http.StatusOK, details)
+}
+
+// markResponseUncacheable overrides the route's public caching policy for a
+// response built from placeholder data. Setting the header here wins because
+// the response has not been written yet, and the policy middleware only set it
+// earlier in the chain.
+func markResponseUncacheable(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 }
 
 const (
@@ -212,6 +256,7 @@ func handleCollectionDetails(c *gin.Context) {
 	apiKey := os.Getenv("TMDB_API_KEY")
 	scope := scopeFrom(c)
 	var collection *CollectionDetails
+	servedFallback := false
 
 	if apiKey == "dummy" {
 		var ok bool
@@ -225,6 +270,7 @@ func handleCollectionDetails(c *gin.Context) {
 		var wire tmdbCollectionResponse
 		if err := tmdbGet(collectionURL, apiKey, &wire, scope); err != nil {
 			log.Printf("Error fetching TMDB collection %d: %v. Falling back to mock.", collectionID, err)
+			servedFallback = true
 			var ok bool
 			collection, ok = getMockCollectionDetails(collectionID)
 			if !ok {
@@ -245,6 +291,9 @@ func handleCollectionDetails(c *gin.Context) {
 		}
 	}
 
+	if servedFallback {
+		markResponseUncacheable(c)
+	}
 	c.JSON(http.StatusOK, collection)
 }
 
@@ -263,6 +312,7 @@ func handleSeasonDetails(c *gin.Context) {
 	apiKey := os.Getenv("TMDB_API_KEY")
 	scope := scopeFrom(c)
 	var season *SeasonDetails
+	servedFallback := false
 
 	if apiKey == "dummy" {
 		var ok bool
@@ -276,6 +326,7 @@ func handleSeasonDetails(c *gin.Context) {
 		var s SeasonDetails
 		if err := tmdbGet(seasonURL, apiKey, &s, scope); err != nil {
 			log.Printf("Error fetching TMDB season details: %v. Falling back to mock.", err)
+			servedFallback = true
 			var ok bool
 			season, ok = getMockSeasonDetails(seriesID, seasonNum)
 			if !ok {
@@ -285,6 +336,9 @@ func handleSeasonDetails(c *gin.Context) {
 		} else {
 			season = &s
 		}
+	}
+	if servedFallback {
+		markResponseUncacheable(c)
 	}
 	c.JSON(http.StatusOK, season)
 }
@@ -309,6 +363,7 @@ func handleEpisodeDetails(c *gin.Context) {
 	apiKey := os.Getenv("TMDB_API_KEY")
 	scope := scopeFrom(c)
 	var episode *Episode
+	servedFallback := false
 
 	if apiKey == "dummy" {
 		var ok bool
@@ -322,6 +377,7 @@ func handleEpisodeDetails(c *gin.Context) {
 		var ep Episode
 		if err := tmdbGet(episodeURL, apiKey, &ep, scope); err != nil {
 			log.Printf("Error fetching TMDB episode details: %v. Falling back to mock.", err)
+			servedFallback = true
 			var ok bool
 			episode, ok = getMockEpisodeDetails(seriesID, seasonNum, episodeNum)
 			if !ok {
@@ -332,79 +388,199 @@ func handleEpisodeDetails(c *gin.Context) {
 			episode = &ep
 		}
 	}
+	if servedFallback {
+		markResponseUncacheable(c)
+	}
 	c.JSON(http.StatusOK, episode)
 }
 
+// discoverPayloadCache holds the marshalled discover response plus the instant
+// it expires.
+//
+// Storing the encoded bytes, rather than only the struct, removes the double
+// marshal the handler used to perform on every request: once to build the
+// response body and again to write the Redis copy. Serving the stored bytes is
+// also what makes the cache hit a single write with no encoding at all.
+type discoverPayloadCache struct {
+	mu        sync.RWMutex
+	payload   []byte
+	expiresAt time.Time
+	duration  time.Duration
+	// inflight coalesces concurrent rebuilds so a cold cache at peak does not
+	// become N simultaneous three-call TMDB fan-outs.
+	inflight *discoverInflight
+}
+
+type discoverInflight struct {
+	done    chan struct{}
+	payload []byte
+}
+
+var discoverCache = &discoverPayloadCache{
+	duration: 10 * time.Minute,
+	inflight: &discoverInflight{},
+}
+
+// freshPayload returns the cached bytes when they are still valid.
+func (c *discoverPayloadCache) freshPayload() ([]byte, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.payload) == 0 || !time.Now().Before(c.expiresAt) {
+		return nil, false
+	}
+	return c.payload, true
+}
+
+func (c *discoverPayloadCache) store(payload []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.payload = payload
+	c.expiresAt = time.Now().Add(c.duration)
+}
+
+// beginRebuild registers this caller as the one performing the rebuild, or
+// reports that another already is.
+func (c *discoverPayloadCache) beginRebuild() (*discoverInflight, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.inflight.done != nil {
+		return c.inflight, false
+	}
+	c.inflight = &discoverInflight{done: make(chan struct{})}
+	return c.inflight, true
+}
+
+// finishRebuild publishes the result and releases the waiters.
+//
+// The payload is stored before the channel closes, so a waiter that wakes up is
+// guaranteed to observe it.
+func (c *discoverPayloadCache) finishRebuild(call *discoverInflight, payload []byte) {
+	if payload != nil {
+		c.store(payload)
+	}
+
+	c.mu.Lock()
+	call.payload = payload
+	if c.inflight == call {
+		c.inflight = &discoverInflight{}
+	}
+	c.mu.Unlock()
+
+	close(call.done)
+}
+
+// handleDiscover serves the public Discover carousels.
+//
+// The previous version held the write lock across all three TMDB calls. Every
+// other request for this endpoint — and it is the app's first screen — blocked
+// on that mutex for the whole fetch, so a single cold cache serialised the
+// entire endpoint behind one multi-second network round trip. The lock now
+// covers only the cache read and the cache write; the fetching is coalesced
+// separately by an in-flight barrier.
 func handleDiscover(c *gin.Context) {
-	// 1. Read Lock Cache Check
-	discoverCache.RLock()
-	if discoverCache.data != nil && time.Now().Before(discoverCache.expiresAt) {
-		data := discoverCache.data
-		discoverCache.RUnlock()
-		log.Println("Serving discover response from memory cache")
-		c.JSON(http.StatusOK, data)
+	// 1. In-process cache. This is the path essentially every request takes.
+	if payload, ok := discoverCache.freshPayload(); ok {
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 		return
 	}
-	discoverCache.RUnlock()
 
-	// 1b. Shared cache. This endpoint is public and identical for every user,
-	// so Redis is pure upside: it survives restarts (which otherwise cost three
-	// TMDB calls plus OMDb enrichment) and is shared across replicas. A miss or
-	// an outage falls through to the in-process path below.
+	// 2. Shared cache. This endpoint is public and identical for every user, so
+	// Redis is pure upside: it survives restarts (which otherwise cost three
+	// TMDB calls plus rating enrichment) and is shared across replicas.
 	sharedKey := redisNamedKey("discover", "v1")
 	if payload, ok := redisGet(sharedKey); ok {
-		var cached DiscoverResponse
-		if err := json.Unmarshal(payload, &cached); err == nil {
-			discoverCache.Lock()
-			discoverCache.data = &cached
-			discoverCache.expiresAt = time.Now().Add(discoverCache.duration)
-			discoverCache.Unlock()
-			c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+		discoverCache.store(payload)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+		return
+	}
+
+	// 3. Coalesce the rebuild. Followers wait for the leader's payload rather
+	// than each starting their own three-call fan-out.
+	call, leader := discoverCache.beginRebuild()
+	if !leader {
+		<-call.done
+		if len(call.payload) > 0 {
+			c.Data(http.StatusOK, "application/json; charset=utf-8", call.payload)
 			return
+		}
+		// The leader failed. Fall through and build it here rather than
+		// returning an error: one failed rebuild should not fail every waiter.
+		call, leader = discoverCache.beginRebuild()
+		if !leader {
+			// Another waiter also fell through and won the race; wait for it.
+			<-call.done
+			if len(call.payload) > 0 {
+				c.Data(http.StatusOK, "application/json; charset=utf-8", call.payload)
+				return
+			}
 		}
 	}
 
-	// 2. Cache expired or empty: Acquire Write Lock
-	discoverCache.Lock()
-	defer discoverCache.Unlock()
+	if leader {
+		// finishRebuild must run on every path, or the waiters block forever.
+		var payload []byte
+		defer func() { discoverCache.finishRebuild(call, payload) }()
 
-	// Double-check condition after acquiring lock (avoid race condition)
-	if discoverCache.data != nil && time.Now().Before(discoverCache.expiresAt) {
-		c.JSON(http.StatusOK, discoverCache.data)
+		scope := scopeFrom(c)
+		var data *DiscoverResponse
+		servedFallback := false
+
+		if os.Getenv("TMDB_API_KEY") == "dummy" {
+			data = getMockDiscoverData()
+		} else {
+			var err error
+			data, err = fetchDiscoverData(scope)
+			if err != nil {
+				log.Printf("Error fetching discover data: %v. Falling back to mock.", err)
+				data = getMockDiscoverData()
+				servedFallback = true
+			}
+		}
+		enrichMediaRatings(data.Trending, scope)
+		enrichMediaRatings(data.Popular, scope)
+		enrichMediaRatings(data.PopularSeries, scope)
+
+		encoded, err := json.Marshal(data)
+		if err != nil {
+			// Nothing cacheable; the defer publishes nil and callers fall back
+			// to building it themselves.
+			log.Printf("Discover: failed to encode payload: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode discover data"})
+			return
+		}
+		payload = encoded
+
+		// Placeholder content must not reach a shared cache: with the public
+		// policy this route carries, a CDN would store the fake payload and
+		// keep serving it to every visitor for the whole max-age window.
+		if servedFallback {
+			c.Header("Cache-Control", "no-store")
+			c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+			return
+		}
+
+		redisSet(sharedKey, payload, discoverCache.duration)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 		return
 	}
 
-	log.Println("Cache expired or empty. Fetching fresh data...")
+	// Not the leader, and the leader produced nothing: build and serve this
+	// request's own copy without publishing it.
 	scope := scopeFrom(c)
-	var data *DiscoverResponse
-	var err error
-	if os.Getenv("TMDB_API_KEY") == "dummy" {
-		data = getMockDiscoverData()
-	} else {
-		data, err = fetchDiscoverData(scope)
-		if err != nil {
-			log.Printf("Error fetching discover data: %v. Falling back to mock.", err)
-			data = getMockDiscoverData()
-			err = nil
+	data := getMockDiscoverData()
+	if os.Getenv("TMDB_API_KEY") != "dummy" {
+		if fetched, err := fetchDiscoverData(scope); err == nil {
+			data = fetched
+		} else {
+			c.Header("Cache-Control", "no-store")
 		}
 	}
 	enrichMediaRatings(data.Trending, scope)
 	enrichMediaRatings(data.Popular, scope)
 	enrichMediaRatings(data.PopularSeries, scope)
-
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch discover data"})
-		return
-	}
-
-	// Update cache
-	discoverCache.data = data
-	discoverCache.expiresAt = time.Now().Add(discoverCache.duration)
-
-	if payload, err := json.Marshal(data); err == nil {
-		redisSet(sharedKey, payload, discoverCache.duration)
-	}
-
 	c.JSON(http.StatusOK, data)
 }
 

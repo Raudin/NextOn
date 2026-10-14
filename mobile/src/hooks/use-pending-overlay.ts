@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppState } from "react-native";
 
 import { listPendingMutations } from "@/lib/db/outbox";
 import {
   buildPendingOverlay,
-  emptyOverlay,
+  EMPTY_OVERLAY,
   type PendingOverlay,
 } from "@/lib/db/reconcile";
-import { useSync } from "@/context/SyncContext";
+import { useSyncQueue } from "@/context/SyncContext";
 
 /**
  * The set of changes made offline that the server does not know about yet.
@@ -21,8 +20,14 @@ import { useSync } from "@/context/SyncContext";
  * stays hidden longer than it should.
  */
 export const usePendingOverlay = (): PendingOverlay => {
-  const { pendingCount, lastSyncedAt } = useSync();
-  const [overlay, setOverlay] = useState<PendingOverlay>(emptyOverlay);
+  // The queue count only. This used to subscribe to the whole sync context, so
+  // every `isSyncing`/`lastError` transition re-rendered Home and Watchlist even
+  // though neither of them renders sync progress.
+  const { pendingCount } = useSyncQueue();
+  // Starts at the shared constant, and `buildPendingOverlay` returns that same
+  // constant for an empty queue, so the common case never changes the reference
+  // and therefore never re-renders.
+  const [overlay, setOverlay] = useState<PendingOverlay>(EMPTY_OVERLAY);
 
   const reload = useCallback(async () => {
     try {
@@ -31,7 +36,7 @@ export const usePendingOverlay = (): PendingOverlay => {
     } catch {
       // Storage unavailable: fall back to "nothing pending" so the screen still
       // renders the server payload rather than failing.
-      setOverlay(emptyOverlay());
+      setOverlay(EMPTY_OVERLAY);
     }
   }, []);
 
@@ -44,18 +49,15 @@ export const usePendingOverlay = (): PendingOverlay => {
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [reload, pendingCount, lastSyncedAt]);
+  }, [reload, pendingCount]);
 
-  // A mutation queued while the app was backgrounded must be reflected when the
-  // user comes back, before the next sync attempt resolves.
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        reload();
-      }
-    });
-    return () => subscription.remove();
-  }, [reload]);
+  // No AppState listener here.
+  //
+  // There used to be one, and it duplicated SyncProvider's: on every foreground
+  // the provider ran a sync (changing `lastSyncedAt`, which re-ran the effect
+  // above) *and* this hook reloaded the overlay directly, so one resume did the
+  // work twice. The provider's sync already re-runs the effect through
+  // `pendingCount`, which is the value this hook actually depends on.
 
   return overlay;
 };

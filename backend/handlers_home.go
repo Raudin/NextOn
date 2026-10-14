@@ -356,7 +356,7 @@ func handleHomeSchedule(c *gin.Context) {
 	}
 	userUID := userID.(uint)
 
-	cachedJSONResponse(c, homeScheduleCacheKey(userUID), homeScheduleCacheTTL, func() (any, bool) {
+	cachedJSONResponse(c, homeScheduleCacheKeyAt(userUID, currentUserVersionFor(c, userUID)), homeScheduleCacheTTL, func() (any, bool) {
 		return buildHomeSchedule(c, userUID)
 	})
 }

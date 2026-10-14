@@ -1,6 +1,9 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Check, Lock } from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake.
+import Check from "lucide-react-native/icons/check";
+import Lock from "lucide-react-native/icons/lock";
 import { useEffect, useState, useMemo } from "react";
 import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,12 +26,10 @@ import { setTelemetryScreen } from "@/lib/telemetry";
 
 import {
   fetchEpisodeDetails,
-  fetchMediaDetails,
   fetchWatchedStatus,
   markWatched,
   unmarkWatched,
   type Episode,
-  type MediaDetails,
 } from "@/lib/media-api";
 
 /**
@@ -62,9 +63,22 @@ export default function EpisodeDetailScreen() {
     id: string;
     season: string;
     episode: string;
+    /**
+     * The show's artwork, carried in as route params by whoever pushed this
+     * route.
+     *
+     * This screen used to fetch the entire show record just to reach two
+     * paths on it, which meant every episode opened paid for a details
+     * request whose other ~20 fields were thrown away. Every call site already
+     * holds the `TMDBMedia` it navigated from, so the two paths travel with
+     * the navigation instead. Both are optional: a deep link arrives without
+     * them, and the hero then falls back to the episode's own still.
+     */
+    showBackdropPath?: string;
+    showPosterPath?: string;
   }>();
+  const { showBackdropPath, showPosterPath } = params;
   const [episode, setEpisode] = useState<Episode | null>(null);
-  const [showDetails, setShowDetails] = useState<MediaDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [watched, setWatched] = useState(false);
@@ -95,7 +109,6 @@ export default function EpisodeDetailScreen() {
       setLoading(true);
       setError(null);
       try {
-        const fetchShowDetailsPromise = fetchMediaDetails("tv", params.id);
         const fetchEpisodeDetailsPromise = fetchEpisodeDetails(
           params.id,
           Number(params.season),
@@ -103,14 +116,12 @@ export default function EpisodeDetailScreen() {
         );
 
         if (token) {
-          const [episodeData, showData, status] = await Promise.all([
+          const [episodeData, status] = await Promise.all([
             fetchEpisodeDetailsPromise,
-            fetchShowDetailsPromise,
             fetchWatchedStatus(params.id, "tv"),
           ]);
           if (mounted) {
             setEpisode(episodeData);
-            setShowDetails(showData);
             const key = `${params.season}:${params.episode}`;
             setWatched(
               status.episodes?.some(
@@ -119,13 +130,9 @@ export default function EpisodeDetailScreen() {
             );
           }
         } else {
-          const [episodeData, showData] = await Promise.all([
-            fetchEpisodeDetailsPromise,
-            fetchShowDetailsPromise,
-          ]);
+          const episodeData = await fetchEpisodeDetailsPromise;
           if (mounted) {
             setEpisode(episodeData);
-            setShowDetails(showData);
             setWatched(false);
           }
         }
@@ -193,22 +200,20 @@ export default function EpisodeDetailScreen() {
    * 16:9 frame is still a card-sized image. Collapsing the three call sites into
    * one also means the cache policy and transition stay in step with the role.
    *
-   * The dependency list holds the whole objects rather than the three paths: the
-   * React Compiler lint rule rejects a manual list narrower than its inferred
-   * one.
+   * The show's two paths arrive as route params; see the note on `params` above.
    */
   const heroImage = useMemo(() => {
     if (episode?.still_path) {
       return { path: episode.still_path, role: "backdrop" as const };
     }
-    if (showDetails?.backdrop_path) {
-      return { path: showDetails.backdrop_path, role: "backdrop" as const };
+    if (showBackdropPath) {
+      return { path: showBackdropPath, role: "backdrop" as const };
     }
-    if (showDetails?.poster_path) {
-      return { path: showDetails.poster_path, role: "posterCard" as const };
+    if (showPosterPath) {
+      return { path: showPosterPath, role: "posterCard" as const };
     }
     return null;
-  }, [episode, showDetails]);
+  }, [episode, showBackdropPath, showPosterPath]);
 
   return (
     <YStack f={1} bg="$background">

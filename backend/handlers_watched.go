@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -9,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func handleAddWatched(c *gin.Context) {
@@ -19,7 +23,7 @@ func handleAddWatched(c *gin.Context) {
 	}
 	userUID := userID.(uint)
 
-	var req WatchedItem
+	var req WatchedItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watched payload"})
 		return
@@ -42,15 +46,45 @@ func handleAddWatched(c *gin.Context) {
 		return
 	}
 
-	req.UserID = userUID
-	req.WatchedAt = time.Now()
+	// Identity and timestamp come from the server, never from the request body.
+	item := req.WatchedItem(userUID, time.Now())
 
-	addOrUpdateWatched(userUID, req)
+	// The write and its change-log entry share one transaction. A change-log
+	// entry whose row was never written would tell the client about an episode
+	// it cannot then fetch, and a row written without an entry would never
+	// reach the user's other devices.
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := addOrUpdateWatchedTx(tx, userUID, &item); err != nil {
+			return err
+		}
+		if !recordSyncOpsTx(tx, userUID, []pendingSyncOp{{
+			collection: syncCollectionWatched,
+			opType:     syncOpUpsert,
+			entityKey:  watchedEntityKey(item.MediaType, item.MediaID, item.SeasonNumber, item.EpisodeNumber),
+			payload:    item,
+		}}) {
+			return errors.New("failed to record watched change")
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Watched: failed to record %s/%d for user %d: %v", item.MediaType, item.MediaID, userUID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save watched item"})
+		return
+	}
+
 	invalidateUserCaches(userUID)
-	recordSyncOp(userUID, syncCollectionWatched, syncOpUpsert,
-		watchedEntityKey(req.MediaType, req.MediaID, req.SeasonNumber, req.EpisodeNumber), req)
-	c.JSON(http.StatusCreated, req)
+	c.JSON(http.StatusCreated, item)
 }
+
+// maxBulkWatchedItems caps how many items one bulk mark may carry.
+//
+// bulkDelete has always had an equivalent cap; the add path had none, so a
+// single request could carry an arbitrarily large array. Every item becomes a
+// row plus a change-log entry, so an unbounded payload is simultaneously an
+// unbounded transaction, an unbounded response, and enough change-log churn to
+// push every other device past the retention window into a full resync.
+const maxBulkWatchedItems = 5000
 
 func handleAddWatchedBulk(c *gin.Context) {
 	userID, ok := c.Get("user_id")
@@ -61,10 +95,15 @@ func handleAddWatchedBulk(c *gin.Context) {
 	userUID := userID.(uint)
 
 	var req struct {
-		Items []WatchedItem `json:"items"`
+		Items []WatchedItemRequest `json:"items"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bulk payload"})
+		return
+	}
+
+	if len(req.Items) > maxBulkWatchedItems {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Too many items in one request"})
 		return
 	}
 
@@ -97,27 +136,48 @@ func handleAddWatchedBulk(c *gin.Context) {
 	// advanced to. A 200-episode mark therefore produces 200 ops but only one
 	// version bump, and the client applies them in a single pass.
 	applied := make([]WatchedItem, 0, len(req.Items))
-	addedCount := 0
+	pending := make([]pendingSyncOp, 0, len(req.Items))
+	seen := make(map[string]struct{}, len(req.Items))
+
 	for i := range req.Items {
-		item := &req.Items[i]
-		if isUnreleasedFromLookup(item, episodeAirDates, movieReleaseDates) {
+		item := req.Items[i].WatchedItem(userUID, now)
+		if isUnreleasedFromLookup(&item, episodeAirDates, movieReleaseDates) {
 			continue
 		}
-		item.UserID = userUID
-		item.WatchedAt = now
-		addOrUpdateWatched(userUID, *item)
-		applied = append(applied, *item)
-		addedCount++
+
+		// De-duplicate: the batch is inserted in one statement, so an episode
+		// repeated inside a single payload would collide with itself.
+		key := watchedItemKey(item)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		applied = append(applied, item)
+		pending = append(pending, pendingSyncOp{
+			collection: syncCollectionWatched,
+			opType:     syncOpUpsert,
+			entityKey:  watchedEntityKey(item.MediaType, item.MediaID, item.SeasonNumber, item.EpisodeNumber),
+			payload:    item,
+		})
+	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := addOrUpdateWatchedBatch(tx, applied); err != nil {
+			return err
+		}
+		if !recordSyncOpsTx(tx, userUID, pending) {
+			return errors.New("failed to record watched changes")
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Watched: bulk write of %d items failed for user %d: %v", len(applied), userUID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save watched items"})
+		return
 	}
 
 	invalidateUserCaches(userUID)
-	for i := range applied {
-		item := &applied[i]
-		recordSyncOp(userUID, syncCollectionWatched, syncOpUpsert,
-			watchedEntityKey(item.MediaType, item.MediaID, item.SeasonNumber, item.EpisodeNumber), *item)
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"added": addedCount})
+	c.JSON(http.StatusCreated, gin.H{"added": len(applied)})
 }
 
 // WatchedBulkDeleteReq removes many watched episodes in one request. The
@@ -182,18 +242,41 @@ func handleDeleteWatchedBulk(c *gin.Context) {
 		return
 	}
 
-	invalidateUserCaches(userUID)
+	// One change-log entry per requested episode, written in a single batch.
+	// Previously each entry took its own version bump and prune cycle, so
+	// clearing a ten-season show advanced the user's version 200 times and
+	// invalidated every cached payload on every one of them.
+	pending := make([]pendingSyncOp, 0, len(req.Episodes)+1)
 	for _, ep := range req.Episodes {
 		season := ep.Season
 		episode := ep.Episode
-		recordSyncOp(userUID, syncCollectionWatched, syncOpDelete,
-			watchedEntityKey(req.MediaType, req.MediaID, &season, &episode), nil)
+		pending = append(pending, pendingSyncOp{
+			collection: syncCollectionWatched,
+			opType:     syncOpDelete,
+			entityKey:  watchedEntityKey(req.MediaType, req.MediaID, &season, &episode),
+		})
 	}
 	if len(req.Episodes) == 0 {
 		// No episode list means "remove everything for this title".
-		recordSyncOp(userUID, syncCollectionWatched, syncOpDelete,
-			watchedEntityKey(req.MediaType, req.MediaID, nil, nil), nil)
+		pending = append(pending, pendingSyncOp{
+			collection: syncCollectionWatched,
+			opType:     syncOpDelete,
+			entityKey:  watchedEntityKey(req.MediaType, req.MediaID, nil, nil),
+		})
 	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if !recordSyncOpsTx(tx, userUID, pending) {
+			return errors.New("failed to record watched deletions")
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Watched: failed to record %d deletions for user %d: %v", len(pending), userUID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record watched deletions"})
+		return
+	}
+
+	invalidateUserCaches(userUID)
 	c.JSON(http.StatusOK, gin.H{"deleted": result.RowsAffected})
 }
 
@@ -357,8 +440,21 @@ func isMovieFullyWatched(item TMDBMedia, watched []WatchedItem) bool {
 	return false
 }
 
-func addOrUpdateWatched(userID uint, item WatchedItem) {
-	query := db.Where("user_id = ? AND media_id = ? AND media_type = ?", userID, item.MediaID, item.MediaType)
+func addOrUpdateWatched(userID uint, item WatchedItem) error {
+	return addOrUpdateWatchedTx(db, userID, &item)
+}
+
+// addOrUpdateWatchedTx is addOrUpdateWatched bound to a transaction.
+//
+// It returns the database error rather than discarding it. The previous version
+// ignored both Save and Create and the handler answered 201 regardless, so a
+// failed write silently lost the user's data while telling the client it had
+// been stored.
+func addOrUpdateWatchedTx(tx *gorm.DB, userID uint, item *WatchedItem) error {
+	// Match on media identity and let First() own the destination value. The
+	// previous form passed the scoped query as First's condition and the row as
+	// its destination, which is not how GORM's first argument works.
+	query := tx.Where("user_id = ? AND media_id = ? AND media_type = ?", userID, item.MediaID, item.MediaType)
 	if item.SeasonNumber == nil {
 		query = query.Where("season_number IS NULL")
 	} else {
@@ -371,17 +467,77 @@ func addOrUpdateWatched(userID uint, item WatchedItem) {
 	}
 
 	var existing WatchedItem
-	if err := query.First(&existing).Error; err == nil {
+	err := query.First(&existing).Error
+	switch {
+	case err == nil:
 		existing.WatchedAt = item.WatchedAt
-		db.Save(&existing)
-	} else {
-		db.Create(&item)
+		return tx.Save(&existing).Error
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return tx.Create(item).Error
+	default:
+		return err
 	}
 }
 
+// addOrUpdateWatchedBatch writes a whole bulk payload in a handful of
+// statements instead of one per item.
+//
+// The per-item helper issues a SELECT plus an INSERT or UPDATE per item, so a
+// 500-episode mark cost ~1,000 round trips and ~500 auto-commit fsyncs. The
+// caller has already validated and de-duplicated the payload, so a straight
+// batched INSERT is the same outcome at a fraction of the cost.
+//
+// `INSERT OR IGNORE` is used instead of `ON CONFLICT DO UPDATE` because the
+// idx_user_watched unique index contains nullable season_number and
+// episode_number columns. SQLite treats NULLs as distinct in a unique index,
+// so an `ON CONFLICT` clause targeting that index would never fire for movies
+// and duplicates would be inserted on every re-mark. `INSERT OR IGNORE` uses
+// the storage engine's own conflict detection and simply skips the row,
+// keeping the batch fast even when most items already exist.
+//
+// WatchedAt is preserved for an episode the user already had marked: the
+// insert is ignored and the original timestamp stands.
+func addOrUpdateWatchedBatch(tx *gorm.DB, items []WatchedItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// GORM's Clauses API lets us prepend "OR IGNORE" to the INSERT without
+	// writing raw SQL, keeping the batching and column mapping intact.
+	ignoreTx := tx.Clauses(clause.Insert{Modifier: "OR IGNORE"})
+	if err := ignoreTx.CreateInBatches(items, 200).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+// watchedItemKey identifies a watched row the same way its unique index does.
+// Bulk payloads are de-duplicated on this so a repeated episode in one request
+// cannot collide with itself inside a single INSERT.
+func watchedItemKey(item WatchedItem) string {
+	season, episode := int64(0), int64(0)
+	if item.SeasonNumber != nil {
+		season = *item.SeasonNumber
+	}
+	if item.EpisodeNumber != nil {
+		episode = *item.EpisodeNumber
+	}
+	return fmt.Sprintf("%d|%d|%s|%d|%d", item.UserID, item.MediaID, item.MediaType, season, episode)
+}
+
+// getUserWatched returns the user's watch history.
+//
+// Only the columns any caller actually reads are selected. The previous `SELECT
+// *` pulled every column of every row — media ids, season and episode numbers,
+// timestamps — into memory for a history that callers walk to count, group by
+// media type, or extract dates from. Narrowing the projection is what keeps a
+// long history from being the largest allocation on the watchlist and progress
+// paths.
 func getUserWatched(userID uint) []WatchedItem {
 	var items []WatchedItem
-	db.Where("user_id = ?", userID).Find(&items)
+	db.Select("user_id", "media_id", "media_type", "season_number", "episode_number", "watched_at").
+		Where("user_id = ?", userID).
+		Find(&items)
 	return items
 }
 
@@ -469,7 +625,7 @@ func isUnreleased(mediaType string, mediaID int64, seasonNum, episodeNum *int64,
 // watched issued ~200 sequential TMDB episode requests. Here each distinct
 // season is fetched once (through the response cache) and each movie once, and
 // the per-season fetches run concurrently.
-func bulkReleaseLookup(items []WatchedItem, scope *callScope) (episodeAirDates map[string]string, movieReleaseDates map[int64]string) {
+func bulkReleaseLookup(items []WatchedItemRequest, scope *callScope) (episodeAirDates map[string]string, movieReleaseDates map[int64]string) {
 	episodeAirDates = make(map[string]string)
 	movieReleaseDates = make(map[int64]string)
 
@@ -495,13 +651,24 @@ func bulkReleaseLookup(items []WatchedItem, scope *callScope) (episodeAirDates m
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, tmdbDetailConcurrency)
 
-	for key := range seasons {
+	// Acquire the slot inside the goroutine but before any work. The important
+	// property is that at most tmdbDetailConcurrency goroutines are ever doing
+	// TMDB work; the previous form started one goroutine per distinct season
+	// regardless, so a payload naming a thousand seasons spawned a thousand
+	// goroutines and a thousand request closures before any of them ran.
+	run := func(arg any, work func(any)) {
 		wg.Add(1)
-		go func(k seasonKey) {
+		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			work(arg)
+		}()
+	}
 
+	for key := range seasons {
+		run(key, func(arg any) {
+			k := arg.(seasonKey)
 			season, err := fetchSeasonDetail(k.mediaID, k.season, scope)
 			if err != nil {
 				// Unknown season: leave its episodes unresolved. The caller
@@ -515,21 +682,17 @@ func bulkReleaseLookup(items []WatchedItem, scope *callScope) (episodeAirDates m
 				episodeAirDates[episodeKey(k.mediaID, ep.SeasonNumber, ep.EpisodeNumber)] = ep.AirDate
 			}
 			mu.Unlock()
-		}(key)
+		})
 	}
 
 	for mediaID := range movies {
-		wg.Add(1)
-		go func(id int64) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
+		run(mediaID, func(arg any) {
+			id := arg.(int64)
 			releaseDate := fetchMovieReleaseDate(id, scope)
 			mu.Lock()
 			movieReleaseDates[id] = releaseDate
 			mu.Unlock()
-		}(mediaID)
+		})
 	}
 
 	wg.Wait()

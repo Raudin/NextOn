@@ -1,3 +1,22 @@
 .env
 *.db
 nexton.db
+*.exe
+
+# SQLite WAL sidecars.
+#
+# These are runtime state, not source: `-shm` is a process-scoped shared-memory
+# index (SQLite rebuilds it on open) and `-wal` holds recent commits not yet
+# checkpointed into the main file. They are rewritten on every run and are only
+# meaningful alongside the exact `nexton.db` that produced them — which is not
+# tracked either. `*.db` above does not match these suffixes, which is how they
+# were first staged.
+*.db-shm
+*.db-wal
+
+# Local Go build/test caches. Created when the toolchain's default cache
+# location is not writable (a sandbox, for instance) and redirected here.
+# Large and machine-specific, so never committed.
+.gocache/
+.gomodcache/
+.gotmp/

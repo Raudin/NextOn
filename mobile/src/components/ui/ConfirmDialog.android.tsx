@@ -1,7 +1,7 @@
 import { AlertDialog, Host, Text, TextButton } from "@expo/ui/jetpack-compose";
 import { StyleSheet } from "react-native";
 
-import { useAuth } from "@/context/AuthContext";
+import { useThemeMode } from "@/context/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
 
 import type { ConfirmDialogProps } from "./confirm-dialog.types";
@@ -36,7 +36,7 @@ export default function ConfirmDialog({
   onDismiss,
 }: ConfirmDialogProps) {
   const theme = useTheme();
-  const { themeMode } = useAuth();
+  const { themeMode } = useThemeMode();
 
   if (!visible) return null;
 

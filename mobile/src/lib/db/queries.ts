@@ -43,12 +43,23 @@ export const replaceLocalWatchlist = async (
   try {
     const db = await getLocalDatabase();
 
-    await db.withTransactionAsync(async () => {
-      await db.runAsync("DELETE FROM watchlist");
+    // `withExclusiveTransactionAsync` rather than `withTransactionAsync`: the
+    // exclusive form runs the callback against a dedicated handle, so every
+    // statement below is guaranteed to execute on the same connection as the
+    // transaction that owns it.
+    //
+    // With the non-exclusive form the callback is handed the shared handle, and
+    // another task writing to the same handle concurrently can have its
+    // statements absorbed into this transaction — or interleave between the
+    // DELETE and the INSERTs, where a rollback would then take the other task's
+    // work with it. That is why the statements below go through `txn` and never
+    // through `db`.
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync("DELETE FROM watchlist");
 
       for (const entry of entries) {
         const mediaType = entry.media_type === "tv" ? "tv" : "movie";
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO watchlist
              (media_type, media_id, title, name, poster_path, backdrop_path, vote_average, release_date, first_air_date, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

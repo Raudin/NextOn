@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sync"
 	"time"
 )
 
@@ -46,6 +45,36 @@ type FavoriteItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// WatchedItemRequest is the client-supplied shape for marking an episode or
+// movie watched.
+//
+// Requests are bound into this rather than straight into WatchedItem. Binding
+// into the persistence model meant a client could set any field it named,
+// including the primary key `id` — which is the mass-assignment hazard: a
+// crafted body could address or overwrite a row that was not the one being
+// marked. The fields here are exactly the ones a client legitimately chooses;
+// UserID and WatchedAt are set by the server from the authenticated session.
+type WatchedItemRequest struct {
+	MediaID       int64  `json:"media_id"`
+	MediaType     string `json:"media_type"`
+	SeasonNumber  *int64 `json:"season_number"`
+	EpisodeNumber *int64 `json:"episode_number"`
+}
+
+// WatchedItem builds the persistence row for an authenticated user. The id is
+// deliberately left unset so the database assigns it.
+func (r WatchedItemRequest) WatchedItem(userID uint, watchedAt time.Time) WatchedItem {
+	return WatchedItem{
+		UserID:        userID,
+		MediaID:       r.MediaID,
+		MediaType:     r.MediaType,
+		SeasonNumber:  r.SeasonNumber,
+		EpisodeNumber: r.EpisodeNumber,
+		WatchedAt:     watchedAt,
+	}
+}
+
+// WatchedItem is one row of a user's watch history.
 type WatchedItem struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	UserID        uint      `gorm:"not null;uniqueIndex:idx_user_watched" json:"user_id"`
@@ -113,9 +142,15 @@ const (
 //
 // Found is stored explicitly so a title OMDb has no record for is remembered
 // as such. Without it, unknown titles were re-queried on every single request.
+//
+// The composite primary key already creates a unique index over
+// (media_type, media_id) — SQLite backs it with sqlite_autoindex_media_ratings_1
+// — so there is deliberately no additional `uniqueIndex` tag. Declaring one as
+// well made every write maintain two identical indexes. See
+// dropRedundantMediaRatingIndex for the migration that retires the old one.
 type MediaRating struct {
-	MediaType      string    `gorm:"primaryKey;uniqueIndex:idx_media_rating" json:"media_type"`
-	MediaID        int64     `gorm:"primaryKey;uniqueIndex:idx_media_rating" json:"media_id"`
+	MediaType      string    `gorm:"primaryKey" json:"media_type"`
+	MediaID        int64     `gorm:"primaryKey" json:"media_id"`
 	Found          bool      `json:"found"`
 	IMDBRating     *float64  `json:"imdb_rating,omitempty"`
 	Metascore      *int      `json:"metascore,omitempty"`
@@ -355,14 +390,6 @@ type DiscoverResponse struct {
 	Trending      []TMDBMedia `json:"trending"`
 	Popular       []TMDBMedia `json:"popular"`
 	PopularSeries []TMDBMedia `json:"popular_series"`
-}
-
-// Cache holds the cached DiscoverResponse and its expiration time
-type Cache struct {
-	sync.RWMutex
-	data      *DiscoverResponse
-	expiresAt time.Time
-	duration  time.Duration
 }
 
 // Request and Response bodies

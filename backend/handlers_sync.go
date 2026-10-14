@@ -28,6 +28,18 @@ func handleSyncState(c *gin.Context) {
 	}
 	userUID := userID.(uint)
 
+	// Validate before doing any work. This endpoint is polled on every
+	// foreground, so the common outcome is "nothing changed" — and the previous
+	// order spent roughly eight queries (three COUNTs, three highest-version
+	// lookups, plus version reads) building a response that was then thrown
+	// away in favour of a 304.
+	etag := userEntityTag(userUID)
+	c.Header("ETag", etag)
+	if etagMatches(c.GetHeader("If-None-Match"), etag) {
+		c.Status(http.StatusNotModified)
+		return
+	}
+
 	collections := map[string]SyncCollectionState{}
 	for _, collection := range []string{
 		syncCollectionWatchlist,
@@ -43,13 +55,6 @@ func handleSyncState(c *gin.Context) {
 			Version: highestCollectionVersion(userUID, collection),
 			Count:   count,
 		}
-	}
-
-	etag := userEntityTag(userUID)
-	c.Header("ETag", etag)
-	if etagMatches(c.GetHeader("If-None-Match"), etag) {
-		c.Status(http.StatusNotModified)
-		return
 	}
 
 	c.JSON(http.StatusOK, SyncStateResponse{

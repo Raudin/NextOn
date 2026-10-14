@@ -11,7 +11,9 @@ import { useAuth } from "@/context/AuthContext";
 
 import ProfileHeader from "@/components/Profile/ProfileHeader";
 import StatsGrid from "@/components/Profile/StatsGrid";
-import WatchActivityGraph from "@/components/Profile/WatchActivityGraph";
+import WatchActivityGraph, {
+  countWatchedByDay,
+} from "@/components/Profile/WatchActivityGraph";
 import PreferencesSection from "@/components/Profile/PreferencesSection";
 import DiagnosticsSection from "@/components/Profile/DiagnosticsSection";
 import LoadingOrb from "@/components/LoadingOrb";
@@ -27,10 +29,62 @@ import {
   updateUserProfile,
   clearWatchHistory,
   deleteUserAccount,
+  type ProfileResponse,
   type ProfileStats,
   type User,
   type WatchedItem,
 } from "@/lib/media-api";
+
+/**
+ * Reads the profile and the activity history.
+ *
+ * Module-level so the `try`/`catch` is not inside the component: React
+ * Compiler's `BuildHIR` rejects any function containing a `try` with a
+ * `finally` clause and then skips the ENTIRE component, so the profile screen
+ * had no automatic memoisation because of the cleanup in `loadProfile`. Errors
+ * are returned rather than thrown so the caller needs no `try`.
+ *
+ * The history failing is deliberately not an error: the activity graph is
+ * decorative, so a history failure yields an empty graph rather than taking the
+ * profile down with it.
+ */
+type ProfileLoadOutcome =
+  | { status: "ok"; data: ProfileResponse; history: WatchedItem[] }
+  | { status: "error"; message: string };
+
+async function readUserProfile(): Promise<ProfileLoadOutcome> {
+  try {
+    const [data, history] = await Promise.all([
+      fetchUserProfile(),
+      fetchWatchedHistory().catch(() => [] as WatchedItem[]),
+    ]);
+    return { status: "ok", data, history };
+  } catch (err: any) {
+    return { status: "error", message: err?.message || String(err) };
+  }
+}
+
+/**
+ * Saves the edited profile fields.
+ *
+ * `updateUser` (the auth context) is deliberately NOT called here — it is a
+ * React callback, so it belongs to the component. The caller applies it.
+ */
+type ProfileSaveOutcome =
+  | { status: "ok"; updated: User }
+  | { status: "error"; message: string };
+
+async function saveProfileEdits(
+  name: string,
+  avatarUrl: string,
+): Promise<ProfileSaveOutcome> {
+  try {
+    const updated = await updateUserProfile({ name, avatar_url: avatarUrl });
+    return { status: "ok", updated };
+  } catch (err: any) {
+    return { status: "error", message: err?.message || "Failed to update profile." };
+  }
+}
 
 export default function ProfileScreen() {
   const { token, logout, isLoading: authLoading, themeMode, setThemeMode, updateUser } = useAuth();
@@ -45,10 +99,30 @@ export default function ProfileScreen() {
    */
   const topInset = Platform.OS === "android" ? insets.top : 0;
 
-  const [loading, setLoading] = useState(true);
+  /**
+   * Starts false, not true.
+   *
+   * The tab navigator mounts every tab at launch, so an initial `true` claimed
+   * a load that had not started on screens the user had never opened — and the
+   * orb, which is gated on this flag, animated from startup on all of them.
+   * `loadProfile` claims the flag synchronously before its first await, and it
+   * is only ever called from the focus effect below.
+   */
+  const [loading, setLoading] = useState(false);
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [stats, setStats] = useState<ProfileStats | null>(null);
-  const [watchHistory, setWatchHistory] = useState<WatchedItem[]>([]);
+  /**
+   * Per-day watch counts, never the history itself.
+   *
+   * The history is the largest payload this screen loads and is refetched on
+   * every focus, but the only thing that consumes it is the activity graph,
+   * which needs a tally and nothing else. Keeping the array would pin every
+   * entry — and every field on every entry — for the whole session, for the
+   * sake of a count.
+   */
+  const [watchActivity, setWatchActivity] = useState<Map<string, number>>(
+    () => new Map()
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Edit states
@@ -92,24 +166,26 @@ export default function ProfileScreen() {
     if (!token) return;
     setLoading(true);
     setError(null);
-    try {
-      const [data, history] = await Promise.all([
-        fetchUserProfile(),
-        // The activity graph is decorative — never let it block or fail the profile.
-        fetchWatchedHistory().catch(() => [] as WatchedItem[]),
-      ]);
+
+    // No try/finally in the component: see `readUserProfile`. The flag is
+    // cleared after the await on every path, which is what the `finally` did.
+    const outcome = await readUserProfile();
+
+    if (outcome.status === "error") {
+      setError(outcome.message);
+    } else {
+      const { data, history } = outcome;
       setProfileUser(data.user);
       setStats(data.stats);
-      setWatchHistory(history);
+      // Reduced here, immediately, so the array is never handed to state.
+      setWatchActivity(countWatchedByDay(history));
       setEditName(data.user.name || "");
       setSelectedAvatar(data.user.avatar_url || "");
       // Sync auth context user state if needed
       updateUser(data.user);
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   }, [token, updateUser]);
 
   useFocusEffect(
@@ -152,19 +228,20 @@ export default function ProfileScreen() {
       return;
     }
     setUpdating(true);
-    try {
-      const updated = await updateUserProfile({
-        name: editName.trim(),
-        avatar_url: selectedAvatar,
-      });
-      setProfileUser(updated);
-      await updateUser(updated);
+
+    // Same reasoning as `loadProfile`: the request and its outcome
+    // classification live outside the component so no `finally` sits in it.
+    const outcome = await saveProfileEdits(editName.trim(), selectedAvatar);
+
+    if (outcome.status === "error") {
+      setError(outcome.message);
+    } else {
+      setProfileUser(outcome.updated);
+      await updateUser(outcome.updated);
       setIsEditing(false);
-    } catch (err: any) {
-      setError(err.message || "Failed to update profile.");
-    } finally {
-      setUpdating(false);
     }
+
+    setUpdating(false);
   };
 
   const handleToggleNotifications = async (checked: boolean) => {
@@ -296,7 +373,7 @@ export default function ProfileScreen() {
 
             <StatsGrid stats={stats} />
 
-            <WatchActivityGraph items={watchHistory} />
+            <WatchActivityGraph dailyCounts={watchActivity} />
 
             {__DEV__ ? <DiagnosticsSection /> : null}
 

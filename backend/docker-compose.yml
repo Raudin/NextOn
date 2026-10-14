@@ -12,8 +12,21 @@ services:
       - DB_PATH=${DB_PATH:-/data/nexton.db}
       - TMDB_API_KEY=${TMDB_API_KEY:-dummy}
       - OMDB_API_KEY=${OMDB_API_KEY:-}
-      - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_here}
+      # Required. GIN_MODE defaults to release below, and a release build refuses
+      # to start with an unset or placeholder secret rather than signing tokens
+      # with a publicly known key. Compose reports the unset variable with this
+      # form, so a missing value fails loudly at `docker compose up` instead of
+      # producing a container that exits on boot with no explanation.
+      #
+      # Generate one with: openssl rand -base64 48
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set - see .env.example}
       - GIN_MODE=${GIN_MODE:-release}
+      # Comma-separated proxies whose X-Forwarded-For may be trusted. Unset
+      # trusts nothing, which is the safe default.
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      # Comma-separated allowed browser origins. Unset falls back to local
+      # development origins.
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       # Optional. Unset or unreachable means the backend silently falls back to
       # its in-process caches, so this never blocks startup.
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}

@@ -46,6 +46,13 @@ yarn-error.*
 *.exe
 /.pnpm-store/
 
+# Local databases and their WAL sidecars. `*.db` alone misses the `-shm`/`-wal`
+# suffixes SQLite creates next to the database when WAL is enabled, and those
+# are per-run runtime state that must never be committed.
+*.db
+*.db-shm
+*.db-wal
+
 example
 
 # generated native folders

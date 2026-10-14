@@ -57,6 +57,18 @@ export const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
  */
 export const CACHE_BYTE_BUDGET = 2 * 1024 * 1024;
 
+/**
+ * Entry cap for the in-memory mirror of the cache.
+ *
+ * `CACHE_BYTE_BUDGET` bounds what is on disk but said nothing about the Map
+ * held for the life of the session, so a long browse accumulated one parsed
+ * payload per key ever read — watchlists, schedules, details for every title
+ * opened — and none of it was ever released. Memory is worth far less here
+ * than on disk (every entry is re-readable from SQLite), so the cap is small
+ * and eviction is silent rather than size-aware.
+ */
+export const MEMORY_CACHE_MAX_ENTRIES = 50;
+
 // No cast: `SQLiteStorage` satisfies `KVStorage` structurally, so if a future
 // version of kv-store changes a signature the compiler will catch it here
 // rather than at runtime.
@@ -90,23 +102,52 @@ const utf8Bytes = (value: string): number => {
 };
 
 /**
- * Key prefixes that identify cache entries which are NOT derived from the
- * signed-in user's data, and therefore survive `invalidateMediaCaches`.
+ * Key prefixes whose payloads are identical for every user, and which a
+ * mutation therefore cannot invalidate.
  *
- *  - `meta_`   bookkeeping, e.g. when the image cache was last cleared.
- *  - `public_` payloads that are identical for everyone (the Discover feed).
+ *  - `meta_`            bookkeeping, e.g. when the image cache was last cleared.
+ *  - `public_`          the Discover feed and anything else app-wide.
+ *  - `media_details_v3_` a title's details (cast, images, trailers, ratings).
+ *  - `collection_v1_`   a franchise's films.
  *
- * Two prefixes rather than one because the reasons differ, and conflating them
- * would be misleading: `meta_` is not a cache at all, while `public_` is a
- * cache that simply has no user in its key. Everything else is treated as
- * user-derived and cleared on mutation — which means a cache key added by a
- * future screen is invalidated correctly without anyone remembering to extend
- * a list here. The previous hand-written key list had already drifted: it named
- * three keys no current code writes while missing the ones the screens use.
+ * The last two are the reason this list exists. A media detail payload depends
+ * on the *title*, not on the signed-in user: marking an episode watched cannot
+ * change what TMDB says about a film. Clearing them on every mutation meant the
+ * detail screen and the Discover carousels re-downloaded every title they had
+ * already fetched, and invalidateMediaCaches runs on each of the detail screen's
+ * eight mutation paths and again after every delta pull. Those are the two most
+ * expensive payloads in the app (a details response carries the full credits,
+ * images and recommendations blocks), so this was the single largest source of
+ * avoidable traffic.
+ *
+ * Everything NOT listed here is treated as user-derived and is cleared. That
+ * default is deliberate: a cache key added by a future screen is invalidated
+ * correctly without anyone remembering to extend a list, and the cost of
+ * over-clearing a user-scoped entry is one refetch rather than stale data.
  */
 export const META_KEY_PREFIX = "meta_";
 export const PUBLIC_KEY_PREFIX = "public_";
-const PROTECTED_KEY_PREFIXES = [META_KEY_PREFIX, PUBLIC_KEY_PREFIX];
+export const MEDIA_DETAILS_KEY_PREFIX = "media_details_v3_";
+export const COLLECTION_KEY_PREFIX = "collection_v1_";
+
+/**
+ * Cache keys scoped to the signed-in user, in the order they are most likely to
+ * be the one that actually changed. Used to make invalidation greppable and to
+ * document the intent, even though invalidation itself works by exclusion.
+ */
+export const USER_SCOPED_KEY_PREFIXES = [
+  "home_schedule",
+  "watchlist_progress_",
+  "watchlist_ids",
+  "discover_watchlist_ids",
+] as const;
+
+const PROTECTED_KEY_PREFIXES = [
+  META_KEY_PREFIX,
+  PUBLIC_KEY_PREFIX,
+  MEDIA_DETAILS_KEY_PREFIX,
+  COLLECTION_KEY_PREFIX,
+];
 
 class CacheManager {
   private memoryCache = new Map<string, CacheEntry<any>>();
@@ -119,6 +160,41 @@ class CacheManager {
   }
 
   /**
+   * Records a key as the most recently used.
+   *
+   * A `Map` iterates in insertion order, so re-inserting an existing key is
+   * what moves it to the young end — `set` alone would leave it where it was.
+   * That makes the Map's own order the LRU order, with no timestamps, counters
+   * or second structure to keep in step.
+   */
+  private touch(key: string, entry: CacheEntry<any>): void {
+    this.memoryCache.delete(key);
+    this.memoryCache.set(key, entry);
+
+    // Trim here rather than on a timer: an over-cap cache is only ever caused
+    // by an insert, and evicting the oldest read is exactly the LRU rule.
+    while (this.memoryCache.size > MEMORY_CACHE_MAX_ENTRIES) {
+      const oldest = this.memoryCache.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      this.memoryCache.delete(oldest.value);
+    }
+  }
+
+  /**
+   * Drops the in-memory mirror only.
+   *
+   * Deliberately not `clearAll`: the memory cache is a pure optimisation over
+   * the entries in SQLite, so forgetting it costs a re-read and nothing else.
+   * That is what makes this safe under OS memory pressure, where the correct
+   * response is to release memory now and refill lazily.
+   */
+  clearMemory(): void {
+    this.memoryCache.clear();
+  }
+
+  /**
    * Reads an entry without applying its TTL.
    *
    * Callers that may usefully fall back to a stale value (revalidation, where
@@ -127,6 +203,10 @@ class CacheManager {
   async getEntry<T>(key: string): Promise<CacheEntry<T> | null> {
     const memoryItem = this.memoryCache.get(key);
     if (memoryItem !== undefined) {
+      // A hit is a use, so it refreshes this entry's place in the eviction
+      // order. Skipping this would evict by write order instead, which is the
+      // wrong answer for a screen that re-reads the same payload on every focus.
+      this.touch(key, memoryItem);
       return memoryItem as CacheEntry<T>;
     }
 
@@ -137,7 +217,7 @@ class CacheManager {
       }
 
       const entry = JSON.parse(valueStr) as CacheEntry<T>;
-      this.memoryCache.set(key, entry);
+      this.touch(key, entry);
       return entry;
     } catch (err) {
       console.warn(`[CacheManager] Failed to read key "${key}":`, err);
@@ -173,7 +253,7 @@ class CacheManager {
    */
   async setEntry<T>(key: string, entry: CacheEntry<T>): Promise<void> {
     const stored: CacheEntry<T> = { ...entry, timestamp: Date.now() };
-    this.memoryCache.set(key, stored);
+    this.touch(key, stored);
 
     try {
       await storage.setItem(this.getFullKey(key), JSON.stringify(stored));
@@ -268,12 +348,35 @@ class CacheManager {
 export const cache = new CacheManager();
 
 /**
+ * Releases the in-memory cache without touching what is persisted.
+ *
+ * Two callers, one reason each:
+ *
+ *  - The OS `memoryWarning` signal, where the whole point is to give memory
+ *    back now. Wiping the on-disk entries there would be actively harmful —
+ *    the device is short on RAM, not storage, and re-downloading everything
+ *    the user had already fetched is the worst possible answer.
+ *  - Logout, where the session's parsed payloads should not outlive the
+ *    account that produced them. `logout` already clears the durable store;
+ *    this is the part `clearAll` cannot reach on its own because it is a
+ *    different lifetime.
+ *
+ * Synchronous on purpose: `Map.clear()` is, and a promise here would only
+ * invite a caller to await something that has already happened.
+ */
+export const clearMemory = (): void => {
+  cache.clearMemory();
+};
+
+/**
  * Clears every user-derived media cache.
  *
- * Safe to call after any watchlist/watched/favorite mutation. Clears
- * *everything* except `PROTECTED_KEY_PREFIXES`, so a cache key added by a
- * future screen is invalidated correctly without anyone remembering to extend
- * a list here.
+ * Safe to call after any watchlist/watched/favorite mutation. Clears everything
+ * except `PROTECTED_KEY_PREFIXES` — the caches whose contents do not depend on
+ * who is signed in — so a cache key added by a future screen is invalidated
+ * correctly without anyone remembering to extend a list here, while a title's
+ * details and a franchise's films survive a mutation that cannot have changed
+ * them.
  */
 export const invalidateMediaCaches = async () => {
   try {
@@ -467,15 +570,27 @@ export const LEGACY_CACHE_KEYS = [
 export const purgeLegacyCacheKeys = async (): Promise<number> => {
   let removed = 0;
   try {
-    for (const key of LEGACY_CACHE_KEYS) {
-      const storageKey = `${CACHE_PREFIX}${key}`;
-      const existing = await storage.getItem(storageKey);
-      if (existing !== null) {
-        await storage.removeItem(storageKey);
-        cache.delete(key);
-        removed++;
+    // One `multiGet` and one `multiRemove` rather than a read/write pair per
+    // key. Three legacy keys is not a large number, but each of the six calls
+    // was a separate SQLite round trip on the launch path.
+    const storageKeys = LEGACY_CACHE_KEYS.map((key) => `${CACHE_PREFIX}${key}`);
+    const pairs = await storage.multiGet(storageKeys);
+
+    const present: string[] = [];
+    for (const [storageKey, value] of pairs) {
+      if (value !== null) {
+        present.push(storageKey);
       }
     }
+    if (present.length === 0) {
+      return 0;
+    }
+
+    await storage.multiRemove(present);
+    for (const storageKey of present) {
+      cache.delete(storageKey.slice(CACHE_PREFIX.length));
+    }
+    removed = present.length;
   } catch (err) {
     console.warn("[CacheManager] Failed to purge legacy keys:", err);
   }

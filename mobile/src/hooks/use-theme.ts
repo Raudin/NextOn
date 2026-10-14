@@ -5,11 +5,11 @@
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAuth } from '@/context/AuthContext';
+import { useThemeMode } from '@/context/AuthContext';
 
 export function useTheme() {
   const scheme = useColorScheme();
-  const { themeMode } = useAuth();
+  const { themeMode } = useThemeMode();
   const theme = themeMode === 'system'
     ? (scheme === 'dark' ? 'dark' : 'light')
     : themeMode;

@@ -20,6 +20,7 @@ import { blobEffect } from './LineBeam';
 import { oscillatorValue, pulseHueDegrees } from './pulseDriver';
 import type { BorderBeamColorVariant } from './types';
 import { NO_TUNING, type ResolvedTuning } from './tuning';
+import { useBorderBeamClock } from './useBorderBeamClock';
 
 interface PulseTableEntry {
   ci: number;
@@ -140,10 +141,11 @@ export interface PulseBeamProps {
   strength: number;
   width: number;
   height: number;
-  clock: SharedValue<number>;
   fade: SharedValue<number>;
   reduceMotion: boolean;
   tuning?: ResolvedTuning;
+  /** Whether the beam's clock should run. @default true */
+  clockActive?: boolean;
 }
 
 /**
@@ -157,6 +159,9 @@ export interface PulseBeamProps {
  */
 export function PulseBeam(props: PulseBeamProps) {
   const { size, variant, theme, width, height } = props;
+  // Owned here rather than by BorderBeam: this component only mounts while the
+  // beam is drawn, so the clock cannot outlive the effect.
+  const clock = useBorderBeamClock(props.clockActive ?? true);
   const isOutside = size === 'pulse-outside';
   const isDark = theme === 'dark';
   const spec = beamSpec;
@@ -235,7 +240,7 @@ export function PulseBeam(props: PulseBeamProps) {
         },
   };
 
-  const uniforms = usePulseUniforms(props, defs, boxes, { glowSx, glowSy, canvasW, canvasH }, tuning);
+  const uniforms = usePulseUniforms(props, defs, boxes, { glowSx, glowSy, canvasW, canvasH }, tuning, clock);
 
   const glowBlur =
     tuning.coreBlur ?? (isOutside ? (isDark ? oc.glowBlurPx.dark : oc.glowBlurPx.light) : 0);
@@ -319,11 +324,12 @@ function usePulseUniforms(
   defs: { stroke: PulseBlobDef[]; inner: PulseBlobDef[]; bloom: PulseBlobDef[] },
   boxes: Record<'stroke' | 'inner' | 'bloom', LayerBox>,
   geo: { glowSx: number; glowSy: number; canvasW: number; canvasH: number },
-  tuning: ResolvedTuning
+  tuning: ResolvedTuning,
+  clock: SharedValue<number>
 ) {
   const {
     size, variant, theme, staticColors, duration,
-    brightness, saturation, strength, clock, fade, reduceMotion,
+    brightness, saturation, strength, fade, reduceMotion,
   } = props;
   const spec = beamSpec;
   const isOutside = size === 'pulse-outside';

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, View, useColorScheme, type LayoutChangeEvent } from 'react-native';
-import { useClock } from '@shopify/react-native-skia';
 import {
   Easing,
   runOnJS,
@@ -35,6 +34,7 @@ export function BorderBeam({
   staticColors = false,
   duration,
   active = true,
+  visible = true,
   borderRadius,
   brightness,
   saturation,
@@ -53,7 +53,6 @@ export function BorderBeam({
   const [mounted, setMounted] = useState(active);
   const [reduceMotion, setReduceMotion] = useState(false);
   const fade = useSharedValue(0);
-  const clock = useClock();
   const prevActive = useRef<boolean | null>(null);
 
   // Web parity: only the pulse family honors prefers-reduced-motion.
@@ -126,6 +125,15 @@ export function BorderBeam({
 
   const hasSize = layout.width > 0 && layout.height > 0;
 
+  /*
+   * The animation clock is deliberately NOT read here. This component stays
+   * mounted on the tab that owns it whether or not the beam is playing, and a
+   * frame callback runs an rAF loop for as long as it is registered — so a
+   * clock at this level would tick forever behind an idle search field. Each
+   * beam layer takes its own clock instead, and those only mount while the beam
+   * is drawn; `visible` covers the remaining case, a screen that is still
+   * mounted but no longer on screen.
+   */
   return (
     <View style={style} onLayout={handleLayout}>
       {children}
@@ -143,7 +151,7 @@ export function BorderBeam({
           strength={clampedStrength}
           width={layout.width}
           height={layout.height}
-          clock={clock}
+          clockActive={visible}
           fade={fade}
         />
       )}
@@ -160,7 +168,7 @@ export function BorderBeam({
           strength={clampedStrength}
           width={layout.width}
           height={layout.height}
-          clock={clock}
+          clockActive={visible}
           fade={fade}
         />
       )}
@@ -177,7 +185,7 @@ export function BorderBeam({
           strength={clampedStrength}
           width={layout.width}
           height={layout.height}
-          clock={clock}
+          clockActive={visible}
           fade={fade}
           reduceMotion={reduceMotion}
           tuning={resolvedTuning}

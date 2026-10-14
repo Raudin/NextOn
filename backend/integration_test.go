@@ -49,9 +49,14 @@ func initRouterTest(t *testing.T) (*gin.Engine, uint, string) {
 	return newRouter(), userID, signed
 }
 
+// pinnedClock is a fixed instant for tests that assert on a 304. The entity tag
+// embeds a 60 second clock bucket, so an unpinned test would fail whenever the
+// suite crossed a minute boundary between two requests.
+var pinnedClock = time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+
 func authedRequest(t *testing.T, method, path, token string) *http.Request {
 	t.Helper()
-	request := httptest.NewRequest(method, path, nil)
+	request := pinnedClockRequest(method, path, pinnedClock)
 	request.Header.Set("Authorization", "Bearer "+token)
 	return request
 }
