@@ -1,12 +1,13 @@
 import { FlashList } from "@shopify/flash-list";
 import { useAuth } from "@/context/AuthContext";
-import { useFocusEffect, useRouter } from "expo-router";
-import {
-  EllipsisVertical,
-  PartyPopper,
-  type LucideIcon,
-} from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useIsFocused, useRouter } from "expo-router";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake. `LucideIcon` is a
+// type only, erased at build time, and is not exported from that subpath.
+import EllipsisVertical from "lucide-react-native/icons/ellipsis-vertical";
+import PartyPopper from "lucide-react-native/icons/party-popper";
+import { type LucideIcon } from "lucide-react-native";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -42,6 +43,25 @@ import {
 } from "@/lib/media-api";
 
 /**
+ * A watchlist entry plus the values the list sorts, filters and counts on.
+ *
+ * Computed once per list change rather than inside a comparator or a per-item
+ * predicate, so a keystroke costs a handful of string and number comparisons
+ * instead of re-parsing dates and re-lowercasing titles hundreds of times.
+ */
+interface DecoratedEntry {
+  item: WatchlistEntry;
+  /** Display title, for the alphabetical comparator. */
+  title: string;
+  /** Lowercased title, for substring search. */
+  lowerTitle: string;
+  /** `created_at` in epoch ms, 0 when absent or unparseable. */
+  createdTime: number;
+  /** Watching status, previously derived in three separate passes. */
+  status: WatchlistStatus;
+}
+
+/**
  * Posters per row in the grid layout. Rows are pre-chunked for FlashList (see
  * `listData`), so this is also the item-grouping size.
  */
@@ -67,6 +87,35 @@ type WatchlistListItem =
  * `requestJsonCached`, and the server answers an unchanged list with a 304.
  */
 
+/**
+ * Loads the watchlist for the screen.
+ *
+ * Deliberately a module-level function rather than an inline `try`/`catch`
+ * inside the component's loader. React Compiler's `BuildHIR` rejects any
+ * function containing a `try` with a `finally` clause, and it does so for the
+ * WHOLE component — so the screen silently lost all of its automatic
+ * memoisation because of the cleanup in `loadWatchlist`. Extracting the work
+ * here keeps the `finally` (which is the correct construct for this) out of the
+ * component's body, and the component just awaits the result.
+ *
+ * Errors are returned rather than thrown so the component needs no `try` at
+ * all; the caller renders the message.
+ *
+ * The success type is derived from the loader rather than named, so this cannot
+ * drift from what `loadWatchlistWithFallback` actually resolves to.
+ */
+type WatchlistFetchResult =
+  | Awaited<ReturnType<typeof loadWatchlistWithFallback>>
+  | { error: string };
+
+async function fetchWatchlistForScreen(): Promise<WatchlistFetchResult> {
+  try {
+    return await loadWatchlistWithFallback();
+  } catch (err: any) {
+    return { error: err?.message || String(err) };
+  }
+}
+
 function isFutureDate(value?: string | null) {
   if (!value) return false;
   const parts = value.split("-");
@@ -90,8 +139,21 @@ export default function WatchlistScreen() {
   // `theme="dark"`, and this app can pin either one independently of the OS.
   const isLight = useThemeName() === "light";
   const { typing, markTyping, stopTyping } = useTypingActivity();
+  // The tab stays mounted after the user leaves it, and the beam's clock is a
+  // real per-frame loop, so it has to be told when the screen is off-screen.
+  // Same signal `LoadingOrb` uses for the same reason.
+  const isFocused = useIsFocused();
   const [items, setItems] = useState<WatchlistEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  /**
+   * Starts false, not true.
+   *
+   * The tab navigator mounts every tab at launch, so an initial `true` claimed
+   * a load that had not started on screens the user had never opened — and the
+   * orb, which is gated on this flag, animated from startup on all of them.
+   * The flag is now claimed by `loadWatchlist`, which the focus effect below
+   * calls synchronously, so the focused tab still shows the orb for a slow load.
+   */
+  const [loading, setLoading] = useState(false);
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WatchlistTab>("tv");
@@ -146,16 +208,20 @@ export default function WatchlistScreen() {
       }
       setError(null);
 
-      try {
-        const { items: fetchedItems, source } = await loadWatchlistWithFallback();
-        setItems(fetchedItems);
-        setShowingLocalMirror(source === "local");
-      } catch (err: any) {
-        setError(err.message || String(err));
-      } finally {
-        setLoading(false);
-        setBackgroundRefreshing(false);
+      // No try/finally here: see `fetchWatchlistForScreen` for why the settle
+      // work lives outside the component. The flags are cleared after the
+      // await on every path, which is what the `finally` did.
+      const result = await fetchWatchlistForScreen();
+
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        setItems(result.items);
+        setShowingLocalMirror(result.source === "local");
       }
+
+      setLoading(false);
+      setBackgroundRefreshing(false);
     },
     [token],
   );
@@ -170,6 +236,8 @@ export default function WatchlistScreen() {
     useCallback(() => {
       setTelemetryScreen("watchlist");
       if (token) {
+        // `loadWatchlist` claims `loading` synchronously before its first
+        // await, so the orb's debounce starts when the user reaches the tab.
         loadWatchlist();
       }
     }, [loadWatchlist, token]),
@@ -232,53 +300,83 @@ export default function WatchlistScreen() {
     Math.min(180, Math.floor((width - 32 - gridGap * 2) / 3)),
   );
 
+  /**
+   * The active tab's items with the values the list sorts and filters on
+   * precomputed once.
+   *
+   * Sorting used to call `new Date(...)` and `mediaTitle(...)` inside the
+   * comparator, so a 60-title list parsed ~350 dates per keystroke and
+   * lowercased ~1,000 titles, on the JS thread, while the user typed. All three
+   * derived values are fixed for a given item, so they are computed once per
+   * list change and merely compared afterwards.
+   *
+   * `status` is precomputed here too because it was being recomputed in three
+   * separate passes (the count pills, the active status filter, and the
+   * released/unreleased split) on every one of those keystrokes.
+   */
+  const decoratedItems = useMemo(() => {    const baseItems = activeTab === "movies" ? movies : shows;
+
+    return baseItems.map((item) => {
+      const title = mediaTitle(item);
+      const lowerTitle = title.toLowerCase();
+      // `created_at` is an ISO string; an unparseable or missing value sorts
+      // last, which is what the previous `?: 0` produced.
+      const createdTime = item.created_at
+        ? new Date(item.created_at).getTime()
+        : 0;
+
+      let status: WatchlistStatus;
+      if (item.media_type !== "tv") {
+        status = isFutureDate(item.release_date) ? "upcoming" : "available";
+      } else if (item.progress?.released === false) {
+        status = "upcoming";
+      } else {
+        status = item.progress?.caught_up ? "caughtUp" : "available";
+      }
+
+      return {
+        item,
+        title,
+        lowerTitle,
+        createdTime: Number.isFinite(createdTime) ? createdTime : 0,
+        status,
+      };
+    });
+  }, [activeTab, movies, shows]);
+
+  /**
+   * The search term the list is filtered by, deliberately lagging the field.
+   *
+   * The query comes from a TextInput, so every keystroke would otherwise
+   * re-filter and re-sort the whole list synchronously. Deferring lets React
+   * paint the keystroke first and run the filter afterwards, which is the
+   * difference between a responsive field and dropped frames on a long list.
+   */
+  const deferredQuery = useDeferredValue(searchQuery);
+
   const filteredItems = useMemo(() => {
-    const baseItems = activeTab === "movies" ? movies : shows;
+    const query = deferredQuery.trim().toLowerCase();
 
-    const query = searchQuery.trim().toLowerCase();
-
+    // `filter` already returns a fresh array, so no defensive copy is needed
+    // and the sort below cannot mutate the memoised input.
     const nextItems = query
-      ? baseItems.filter((item) =>
-          mediaTitle(item).toLowerCase().includes(query),
-        )
-      : [...baseItems];
+      ? decoratedItems.filter((entry) => entry.lowerTitle.includes(query))
+      : decoratedItems.slice();
 
     nextItems.sort((left, right) => {
       if (sortMode === "alphabetical") {
-        return mediaTitle(left).localeCompare(mediaTitle(right));
+        return left.title.localeCompare(right.title);
       }
 
-      const leftTime = left.created_at
-        ? new Date(left.created_at).getTime()
-        : 0;
-      const rightTime = right.created_at
-        ? new Date(right.created_at).getTime()
-        : 0;
-
-      if (leftTime !== rightTime) {
-        return rightTime - leftTime;
+      if (left.createdTime !== right.createdTime) {
+        return right.createdTime - left.createdTime;
       }
 
-      return mediaTitle(left).localeCompare(mediaTitle(right));
+      return left.title.localeCompare(right.title);
     });
 
     return nextItems;
-  }, [activeTab, movies, searchQuery, shows, sortMode]);
-
-  /** Watching status of a single item, used by the filter pills. */
-  const statusOf = useCallback((item: WatchlistEntry): WatchlistStatus => {
-    if (item.media_type !== "tv") {
-      // Movies carry no per-episode data: a future release date is the only
-      // "not watchable yet" signal, matching the Home screen schedule.
-      return isFutureDate(item.release_date) ? "upcoming" : "available";
-    }
-
-    // Progress is computed server-side; the client only reads it.
-    if (item.progress?.released === false) {
-      return "upcoming";
-    }
-    return item.progress?.caught_up ? "caughtUp" : "available";
-  }, []);
+  }, [decoratedItems, deferredQuery, sortMode]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<WatchlistStatus, number> = {
@@ -286,28 +384,29 @@ export default function WatchlistScreen() {
       caughtUp: 0,
       upcoming: 0,
     };
-    for (const item of filteredItems) {
-      counts[statusOf(item)] += 1;
+    // Read from the precomputed field rather than re-deriving it per item.
+    for (const entry of filteredItems) {
+      counts[entry.status] += 1;
     }
     return counts;
-  }, [filteredItems, statusOf]);
+  }, [filteredItems]);
 
   /** Items left after the active status pill, if any. */
   const visibleItems = useMemo(
     () =>
       statusFilter
-        ? filteredItems.filter((item) => statusOf(item) === statusFilter)
+        ? filteredItems.filter((entry) => entry.status === statusFilter)
         : filteredItems,
-    [filteredItems, statusFilter, statusOf],
+    [filteredItems, statusFilter],
   );
 
   /** Shows are split into what can be watched now and what is still pending. */
   const availableItems = useMemo(
-    () => visibleItems.filter((item) => item.progress?.released !== false),
+    () => visibleItems.filter((entry) => entry.status !== "upcoming"),
     [visibleItems],
   );
   const unreleasedItems = useMemo(
-    () => visibleItems.filter((item) => item.progress?.released === false),
+    () => visibleItems.filter((entry) => entry.status === "upcoming"),
     [visibleItems],
   );
 
@@ -384,23 +483,25 @@ export default function WatchlistScreen() {
       return out;
     }
 
-    const pushItems = (list: WatchlistEntry[], keyPrefix: string) => {
+    const pushItems = (entries: DecoratedEntry[], keyPrefix: string) => {
       if (layoutMode === "posters") {
-        for (let i = 0; i < list.length; i += POSTER_COLUMNS) {
+        for (let i = 0; i < entries.length; i += POSTER_COLUMNS) {
           out.push({
             type: "posters",
             key: `${keyPrefix}-row-${i}`,
-            items: list.slice(i, i + POSTER_COLUMNS),
+            items: entries
+              .slice(i, i + POSTER_COLUMNS)
+              .map((entry) => entry.item),
           });
         }
         return;
       }
 
-      for (const item of list) {
+      for (const entry of entries) {
         out.push({
           type: "entryRow",
-          key: `${keyPrefix}-${item.media_type || "media"}-${item.id}`,
-          item,
+          key: `${keyPrefix}-${entry.item.media_type || "media"}-${entry.item.id}`,
+          item: entry.item,
         });
       }
     };
@@ -601,7 +702,7 @@ export default function WatchlistScreen() {
                 so 25), not the `md` preset's 16. The theme must come from the
                 app — the port defaults to `dark`, and this app can pin either
                 appearance. */}
-            <BorderBeam theme={isLight ? "light" : "dark"} borderRadius={25} active={typing || searching}>
+            <BorderBeam theme={isLight ? "light" : "dark"} borderRadius={25} active={typing || searching} visible={isFocused}>
               <SearchField
                 value={searchQuery}
                 onChangeText={(value) => {
@@ -639,6 +740,14 @@ export default function WatchlistScreen() {
 
           {showLoadingUI ? (
             <LoadingOrb label="Loading watchlist..." />
+          ) : loading ? (
+            /*
+              The debounce window, before `useDeferredLoading` raises the gate.
+              It renders nothing on purpose: the branches below it both state a
+              conclusion, and "your watchlist is empty" must not be shown while
+              the answer is still on its way.
+            */
+            null
           ) : error ? (
             <YStack f={1} ai="center" jc="center" gap="$4">
               <Text color="$red10" ta="center" fow="700">

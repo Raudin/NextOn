@@ -11,6 +11,7 @@ import {
 } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 
+import { useBorderBeamClock } from './useBorderBeamClock';
 import {
   beamSpec,
   borderPalette,
@@ -79,10 +80,10 @@ export interface RotateBeamProps {
   strength: number;
   width: number;
   height: number;
-  /** Milliseconds clock (Skia useClock). */
-  clock: SharedValue<number>;
   /** 0..1 fade shared value (activate/deactivate). */
   fade: SharedValue<number>;
+  /** Whether the beam's clock should run. @default true */
+  clockActive?: boolean;
 }
 
 /**
@@ -102,9 +103,12 @@ export function RotateBeam({
   strength,
   width,
   height,
-  clock,
   fade,
+  clockActive = true,
 }: RotateBeamProps) {
+  // The clock is owned by the layer that draws, so it exists exactly as long as
+  // the beam does.
+  const clock = useBorderBeamClock(clockActive);
   const rotate = beamSpec.rotate;
   const preset = sizePreset(size);
   const colors = themePreset(size, theme);

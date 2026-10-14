@@ -67,6 +67,12 @@ export function ThinkingOrb({
   // One paint per pass, mutated in place: a fresh SkPaint per dot would
   // allocate ~600 native objects a frame, which is what actually hurts on
   // low-end Android.
+  //
+  // These are native objects whose lifetime React does not manage, so they are
+  // released explicitly below rather than left for a GC pass to notice two
+  // long-lived host objects. That is safe *only* on unmount: `record` is their
+  // sole user and it runs on the JS thread, so once the frame effect's cleanup
+  // has cancelled the rAF there is no way left to touch them.
   const paints = useMemo(() => ({ fill: Skia.Paint(), stroke: Skia.Paint() }), []);
   const rgba = useRef(new Float32Array(4)).current;
 
@@ -74,6 +80,17 @@ export function ThinkingOrb({
   const effSpeed = baseSpeed * speed;
   const box = displaySize ?? size;
   const zoom = box / size;
+
+  // `paints` is stable, so this runs once per orb and releases exactly the two
+  // paints that orb allocated. Not part of the frame effect below: that one
+  // re-runs on every prop change and would dispose paints it is still using.
+  useEffect(
+    () => () => {
+      paints.fill.dispose();
+      paints.stroke.dispose();
+    },
+    [paints]
+  );
 
   useEffect(() => {
     const { fill, stroke } = paints;
@@ -112,6 +129,21 @@ export function ThinkingOrb({
           canvas.drawCircle(d.x, d.y, d.r, fill);
         }
       }, Skia.XYWHRect(0, 0, box, box));
+      // Deliberately NOT disposed before the next write overwrites it.
+      //
+      // This picture is written on the JS thread and read on the UI thread,
+      // where the recorder converts the prop into its own `sk_sp<SkPicture>`
+      // (see `PictureCmd` in react-native-skia). `dispose()` does not merely
+      // drop this thread's reference — it marks the host object disposed, and
+      // the next `getObject()` on it throws "Attempted to access a disposed
+      // object" while also racing the UI thread's read of the same field.
+      // For one whole frame after a write, the UI thread may still be reading
+      // the previous value, so disposing here is a crash, not a saving.
+      //
+      // Nothing is lost by leaving it: the host object registers its byte size
+      // as external memory pressure, so the GC sees the cost and the host
+      // object's destructor frees the picture on the thread that made it.
+      // Throttling the loop below is what actually bounds the allocation rate.
       picture.value = pic;
     };
 
@@ -126,8 +158,18 @@ export function ThinkingOrb({
 
     let raf = 0;
     let running = true;
+    // ~30fps. Each tick allocates a fresh native SkPicture, so halving the
+    // tick rate halves the garbage this decorative indicator produces; the
+    // port's motion is slow enough that the difference is not visible, and the
+    // first frame is still recorded immediately above.
+    const frameIntervalMs = 1000 / 30;
+    let lastRecordedAt = Date.now();
     const loop = () => {
-      record(nowSeconds() * effSpeed);
+      const now = Date.now();
+      if (now - lastRecordedAt >= frameIntervalMs) {
+        lastRecordedAt = now;
+        record(nowSeconds() * effSpeed);
+      }
       if (running) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -127,7 +128,16 @@ func VersionedETagMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		etag := userEntityTag(userUID)
+		// One timestamp for the whole request, so a request that begins inside
+		// one clock bucket cannot be answered with a header from the next.
+		// One version for the whole request too: it is what the ETag and the
+		// payload cache key are both derived from, and reading it twice let a
+		// concurrent mutation put the two out of step — a cache entry written
+		// under one version while the client was told another.
+		version := currentUserVersion(userUID)
+		c.Set(userVersionContextKey, version)
+
+		etag := userEntityTagAt(userUID, version, requestClock(c))
 		c.Header("ETag", etag)
 
 		if etagMatches(c.GetHeader("If-None-Match"), etag) {
@@ -140,10 +150,76 @@ func VersionedETagMiddleware() gin.HandlerFunc {
 	}
 }
 
-// userEntityTag derives the ETag for a user's derived payloads. It embeds the
-// same version the payload cache keys use, so the two can never disagree.
+// etagClockBucket is how long a version-derived ETag stays valid even when
+// nothing the user did has changed.
+//
+// The version alone was not a sound validator. It only advances on a user
+// mutation, but these payloads also change for reasons no mutation causes:
+// the calendar day rolls over and a show moves from "upcoming" to "ready", a
+// new episode airs, TMDB data is corrected, or a rating refresh lands. A client
+// holding `W/"user-1-ver-7"` could therefore be answered 304 indefinitely and
+// never observe any of them.
+//
+// The bucket bounds that staleness. It is not arbitrary: every payload cache
+// keyed off this version already carries a 60 second TTL
+// (see watchlistCacheTTL and homeScheduleCacheTTL), so a clock bucket of the
+// same width makes the validator and the cache agree — a client is never told
+// "unchanged" for longer than the server itself would reuse the payload.
+const etagClockBucket = time.Minute
+
+// userEntityTag derives the ETag for a user's derived payloads.
+//
+// It carries three parts:
+//   - the user id, so two users can never share a validator;
+//   - the sync version, so any mutation immediately retires the old tag;
+//   - the current clock bucket, so external change still surfaces within
+//     etagClockBucket even when the version is untouched.
+// userVersionContextKey carries the user's sync version for the duration of one
+// request, so every consumer of it inside that request agrees on one value and
+// only one database read is spent.
+const userVersionContextKey = "user_version"
+
+// currentUserVersionFor returns the request's cached version, reading it from
+// the database only when the middleware has not already supplied it. Routes
+// without VersionedETagMiddleware still get the plain database read.
+func currentUserVersionFor(c *gin.Context, userID uint) uint64 {
+	if cached, ok := c.Get(userVersionContextKey); ok {
+		if version, ok := cached.(uint64); ok {
+			return version
+		}
+	}
+	return currentUserVersion(userID)
+}
+
+func userEntityTagAt(userID uint, version uint64, now time.Time) string {
+	return fmt.Sprintf(`W/"user-%d-ver-%d-%d"`, userID, version, etagClockBucketAt(now))
+}
+
 func userEntityTag(userID uint) string {
-	return fmt.Sprintf(`W/"user-%d-ver-%d"`, userID, currentUserVersion(userID))
+	return userEntityTagAt(userID, currentUserVersion(userID), time.Now())
+}
+
+// requestClockKey lets a test pin the clock for one request. Nothing in
+// production sets it, so requestClock is time.Now in every real deployment; it
+// exists so that a test asserting "a matching If-None-Match yields 304" cannot
+// fail merely because the suite happened to cross a bucket boundary.
+const requestClockKey = "request_clock"
+
+// requestClock returns the instant to derive this request's validator from.
+func requestClock(c *gin.Context) time.Time {
+	if pinned, ok := c.Get(requestClockKey); ok {
+		if t, ok := pinned.(time.Time); ok {
+			return t
+		}
+	}
+	return time.Now()
+}
+
+// etagClockBucketAt maps an instant onto its bucket index. Split out from
+// userEntityTag so the rollover behaviour is testable without waiting for a
+// wall-clock minute to pass.
+func etagClockBucketAt(t time.Time) int64 {
+	return t.UTC().Truncate(etagClockBucket).Unix()
 }
 
 // etagMatches implements the weak comparison required by RFC 9110 §8.8.3.2:

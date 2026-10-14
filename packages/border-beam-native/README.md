@@ -40,6 +40,19 @@ the system scheme), `staticColors`, `duration`, `active` (fades in/out with
 auto-detection; falls back to the size preset), `brightness`, `saturation`,
 `hueRange`, `strength`, plus `style` for the wrapping `View`.
 
+One prop has no web counterpart: `visible` (default `true`). Pass a screen's
+focus state — `visible={useIsFocused()}` — when the beam outlives its screen,
+e.g. a tab that stays mounted after the user switches away. It is independent
+of `active`, which drives the fade:
+
+```tsx
+const isFocused = useIsFocused();
+
+<BorderBeam active={typing} visible={isFocused} borderRadius={25}>
+  <SearchField />
+</BorderBeam>
+```
+
 ## Using it in this repo (NextOn)
 
 This port is not on npm, so it is vendored here and consumed **from source**.
@@ -127,7 +140,13 @@ deliberately softer than the demo; `WEB_DEMO_PULSE_PRESET` reproduces it.
   filter chain (`hue-rotate` → `brightness` → `saturate`) via W3C
   feColorMatrix math.
 - The beam angle and hue shift run as Reanimated derived values on the UI
-  thread (Skia `useClock`); the JS thread is untouched per-frame.
+  thread; the JS thread is untouched per-frame. Each beam layer (`RotateBeam`,
+  `LineBeam`, `PulseBeam`) owns its own animation clock — `useBorderBeamClock`,
+  a Reanimated `useFrameCallback` — rather than taking one from `BorderBeam`.
+  That is what keeps the frame loop scoped to the beam: the layers only mount
+  while it is drawn, and the callback unregisters on unmount, so an idle beam
+  costs no frames. `visible={false}` covers the remaining case, a beam whose
+  screen is still mounted but off-screen.
 - The SkSL is validated against the real Skia compiler (CanvasKit) in CI-able
   scripts; see `PORT_PLAN.md` Phase 3 for the parity harness.
 
@@ -146,6 +165,18 @@ copy-plus:
   inferred. Without the annotation, declaration emit (`declaration: true`) fails
   with TS2742: the inferred type cannot be named without referencing a path
   inside `node_modules`.
+- `src/useBorderBeamClock.ts` (new) and the `clock` prop in
+  `src/RotateBeam.tsx` / `src/LineBeam.tsx` / `src/PulseBeam.tsx` — upstream
+  reads Skia's `useClock()` once in `BorderBeam`, which is mounted for the
+  lifetime of the tab it sits on. That registers a Reanimated frame callback,
+  and the callback drives a `requestAnimationFrame` loop for as long as it is
+  registered, so an inactive beam kept a UI-thread loop running forever. The
+  clock therefore moved into the layers that only mount while the beam is
+  drawn, and gained an `isActive` argument (`clockActive` on the layers,
+  `visible` on `BorderBeam`) following the pattern of Reanimated's own
+  `useTimestamp`. Geometry is unchanged: every consumer reads `clock / 1000`
+  through a periodic function, so the clock's origin does not affect the
+  motion.
 
 Nothing else in `src/` was touched.
 

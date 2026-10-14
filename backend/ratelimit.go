@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Outbound rate limiting for TMDB and OMDb.
@@ -91,3 +94,132 @@ var (
 	tmdbLimiter = newTokenBucket(tmdbRateLimitPerSec, tmdbRateLimitBurst)
 	omdbLimiter = newTokenBucket(omdbRateLimitPerSec, omdbRateLimitBurst)
 )
+
+// ------------------------------------------------------- inbound auth limiting
+
+// Auth rate limits. These bound the *inbound* side of the same concern: the
+// login and signup handlers run bcrypt, which is deliberately expensive, so an
+// unauthenticated attacker could otherwise pin every CPU with concurrent
+// guesses — and the guess rate itself was unbounded, making password brute
+// forcing cheap.
+const (
+	// authRateLimitPerSec is low because a legitimate client logs in a handful
+	// of times, not dozens of times a second.
+	authRateLimitPerSec = 0.5
+
+	// authRateLimitBurst allows a short flurry (a retry after a typo) without
+	// letting a scripted attack through.
+	authRateLimitBurst = 8
+
+	// authLimiterIdleTTL is how long an unused per-IP bucket is kept. Without
+	// eviction the map would grow once per distinct source address forever,
+	// which is its own denial-of-service vector.
+	authLimiterIdleTTL = 15 * time.Minute
+
+	// authLimiterMaxIPs caps the map even if eviction cannot keep up, so a
+	// spoofed-source flood cannot exhaust memory.
+	authLimiterMaxIPs = 10000
+
+	// authLimiterSweepInterval bounds how often the map is scanned.
+	authLimiterSweepInterval = time.Minute
+)
+
+// ipRateLimiter holds one token bucket per source address.
+type ipRateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*ipBucket
+	perSec  float64
+	burst   float64
+
+	lastSweep time.Time
+	lastEvict time.Time
+}
+
+type ipBucket struct {
+	bucket   *tokenBucket
+	lastSeen time.Time
+}
+
+func newIPRateLimiter(perSec, burst float64) *ipRateLimiter {
+	return &ipRateLimiter{
+		buckets:   make(map[string]*ipBucket),
+		perSec:    perSec,
+		burst:     burst,
+		lastSweep: time.Now(),
+	}
+}
+
+// allow reports whether a request from ip may proceed, consuming a token.
+//
+// A client that is over the limit is refused rather than delayed: these are
+// authentication attempts, and making an attacker wait is not the goal — not
+// spending CPU on them is.
+func (l *ipRateLimiter) allow(ip string) bool {
+	if ip == "" {
+		// No identifiable source (should not happen behind a configured
+		// proxy): fail open rather than locking every such request out.
+		return true
+	}
+
+	l.mu.Lock()
+	entry, ok := l.buckets[ip]
+	if !ok {
+		if len(l.buckets) >= authLimiterMaxIPs {
+			// At capacity, shed the least recently seen entries instead of
+			// growing without bound.
+			l.evictLocked(time.Now())
+		}
+		entry = &ipBucket{bucket: newTokenBucket(l.perSec, l.burst)}
+		l.buckets[ip] = entry
+	}
+	entry.lastSeen = time.Now()
+	l.sweepLocked(entry.lastSeen)
+	l.mu.Unlock()
+
+	// take() with no wait: either there is a token now or the request is
+	// refused. maxWait of 0 also means the context is never consulted.
+	return entry.bucket.take(context.Background(), 0)
+}
+
+// sweepLocked periodically drops buckets that have not been used recently.
+func (l *ipRateLimiter) sweepLocked(now time.Time) {
+	if now.Sub(l.lastSweep) < authLimiterSweepInterval {
+		return
+	}
+	l.lastSweep = now
+	l.evictLocked(now)
+}
+
+func (l *ipRateLimiter) evictLocked(now time.Time) {
+	for ip, entry := range l.buckets {
+		if now.Sub(entry.lastSeen) > authLimiterIdleTTL {
+			delete(l.buckets, ip)
+		}
+	}
+	l.lastEvict = now
+}
+
+// authLimiter is the shared limiter for the credential endpoints. One instance
+// rather than one per route: an attacker should not get a fresh allowance by
+// alternating between login and signup.
+var authLimiter = newIPRateLimiter(authRateLimitPerSec, authRateLimitBurst)
+
+// RateLimitAuthMiddleware refuses credential requests from a source exceeding
+// its allowance.
+//
+// Keyed on c.ClientIP(), which is only trustworthy because the router is
+// configured to trust no proxy by default (see configureTrustedProxies): with
+// gin's default of trusting every proxy, a client could pick its own key by
+// sending X-Forwarded-For and bypass the limit entirely.
+func RateLimitAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !authLimiter.allow(c.ClientIP()) {
+			c.Header("Retry-After", "30")
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "Too many attempts. Please wait a moment and try again.",
+			})
+			return
+		}
+		c.Next()
+	}
+}

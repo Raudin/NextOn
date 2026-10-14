@@ -1,0 +1,38 @@
+# Build context exclusions.
+#
+# Without this file the whole directory is uploaded to the Docker daemon on
+# every build — including `.env` (real secrets, which would then persist in the
+# build cache and possibly in an image layer), `nexton.db` (the live database,
+# with user rows), and `backend.exe` (a ~50 MB local build that has no business
+# being in a Linux image's context).
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Local database and its WAL sidecars
+*.db
+*.db-shm
+*.db-wal
+
+# Local build output
+*.exe
+*.exe~
+*.test
+/out/
+
+# Tooling and editor state
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+.gocache/
+.gomodcache/
+.gotmp/
+
+# Documentation and orchestration, not needed to compile
+*.md
+docker-compose.yml
+docker-compose.*.yml

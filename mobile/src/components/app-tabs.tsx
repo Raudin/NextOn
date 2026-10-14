@@ -1,7 +1,7 @@
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { useColorScheme } from "react-native";
 
-import { useAuth } from "@/context/AuthContext";
+import { useThemeMode } from "@/context/AuthContext";
 
 /**
  * Tab bar colours, per appearance.
@@ -76,7 +76,8 @@ const PALETTE = {
  */
 export default function AppTabs() {
   const systemScheme = useColorScheme();
-  const { themeMode } = useAuth();
+  // The theme alone: the tab bar has no interest in the session.
+  const { themeMode } = useThemeMode();
 
   // `themeMode` wins over the OS: the app can pin an appearance, and the tab bar
   // should follow that the same way the rest of the UI does.

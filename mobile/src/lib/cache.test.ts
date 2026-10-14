@@ -3,10 +3,14 @@ import Storage from "expo-sqlite/kv-store";
 import {
   cache,
   CACHE_BYTE_BUDGET,
+  COLLECTION_KEY_PREFIX,
   DEFAULT_TTL_MS,
+  MEDIA_DETAILS_KEY_PREFIX,
+  MEMORY_CACHE_MAX_ENTRIES,
   META_KEY_PREFIX,
   PUBLIC_KEY_PREFIX,
   auditCacheStorage,
+  clearMemory,
   invalidateMediaCaches,
   pruneCacheStorage,
   purgeLegacyCacheKeys,
@@ -117,6 +121,76 @@ describe("entries and HTTP validators", () => {
   });
 });
 
+describe("in-memory cache bound", () => {
+  it("caps how many entries it holds, evicting the oldest", async () => {
+    // The eviction is a memory-only affair: an entry dropped from the Map is
+    // still in SQLite, so the next read simply goes back to storage. A cap
+    // that lost data would be a bug, not a cache.
+    for (let i = 0; i < MEMORY_CACHE_MAX_ENTRIES + 5; i++) {
+      await cache.set(`entry-${i}`, `value-${i}`);
+    }
+
+    const getItem = jest.spyOn(Storage, "getItem");
+
+    // Oldest of all, so it was the first evicted.
+    expect(await cache.get("entry-0")).toBe("value-0");
+    expect(getItem).toHaveBeenCalledWith("nexton_cache_entry-0");
+
+    getItem.mockClear();
+
+    // The newest is still a memory hit, which is the whole point of keeping a
+    // memory cache at all.
+    const newest = MEMORY_CACHE_MAX_ENTRIES + 4;
+    expect(await cache.get(`entry-${newest}`)).toBe(`value-${newest}`);
+    expect(getItem).not.toHaveBeenCalled();
+
+    getItem.mockRestore();
+  });
+
+  it("counts a read as a use, so a re-read entry is not the next one out", async () => {
+    for (let i = 0; i < MEMORY_CACHE_MAX_ENTRIES; i++) {
+      await cache.set(`entry-${i}`, i);
+    }
+
+    // Touch the oldest. Eviction by write order — the naive implementation of
+    // a Map-based cap — would still discard this one first.
+    expect(await cache.get("entry-0")).toBe(0);
+
+    await cache.set("overflow", "x");
+
+    const getItem = jest.spyOn(Storage, "getItem");
+
+    expect(await cache.get("entry-0")).toBe(0);
+    expect(getItem).not.toHaveBeenCalled();
+
+    // Its neighbour is now the least recently used, so that is what went.
+    expect(await cache.get("entry-1")).toBe(1);
+    expect(getItem).toHaveBeenCalledWith("nexton_cache_entry-1");
+
+    getItem.mockRestore();
+  });
+
+  it("clearMemory drops the in-memory copy and keeps the persisted one", async () => {
+    await cache.set("kept", { value: 1 });
+
+    const getItem = jest.spyOn(Storage, "getItem");
+
+    expect(await cache.get("kept")).toEqual({ value: 1 });
+    expect(getItem).not.toHaveBeenCalled();
+    getItem.mockClear();
+
+    clearMemory();
+
+    // Still readable, and now served from storage — which is exactly the
+    // contract: releasing memory under pressure must not cost the user data
+    // they had already fetched.
+    expect(await cache.get("kept")).toEqual({ value: 1 });
+    expect(getItem).toHaveBeenCalledWith("nexton_cache_kept");
+
+    getItem.mockRestore();
+  });
+});
+
 describe("invalidateMediaCaches", () => {
   it("clears derived data but keeps bookkeeping and shared payloads", async () => {
     await cache.set("home_schedule", { shows: [] });
@@ -143,6 +217,56 @@ describe("invalidateMediaCaches", () => {
     await cache.set("some_future_screen_key", "value");
     await invalidateMediaCaches();
     expect(await cache.get("some_future_screen_key")).toBeNull();
+  });
+
+  it("keeps media details and collections, which no mutation can change", async () => {
+    // A title's details and a franchise's films depend on the title, not on who
+    // is signed in. Clearing them on every mutation made the detail screen and
+    // the Discover carousels re-download everything they had already fetched —
+    // and invalidateMediaCaches runs on all eight of the detail screen's
+    // mutation paths and again after every delta pull.
+    await cache.set(`${MEDIA_DETAILS_KEY_PREFIX}movie_603`, { title: "The Matrix" });
+    await cache.set(`${COLLECTION_KEY_PREFIX}2344`, { parts: [] });
+    await cache.set("watchlist_ids", [603]);
+
+    await invalidateMediaCaches();
+
+    expect(await cache.get(`${MEDIA_DETAILS_KEY_PREFIX}movie_603`)).toEqual({
+      title: "The Matrix",
+    });
+    expect(await cache.get(`${COLLECTION_KEY_PREFIX}2344`)).toEqual({ parts: [] });
+    // The derived membership index IS user-scoped, so it must still go.
+    expect(await cache.get("watchlist_ids")).toBeNull();
+  });
+
+  it("keeps every key a mutation cannot affect, and drops the rest", async () => {
+    await cache.set("home_schedule", { shows: [] });
+    await cache.set("watchlist_progress_all", []);
+    await cache.set("watchlist_ids", [1]);
+    await cache.set("discover_watchlist_ids", [1]);
+    await cache.set(`${MEDIA_DETAILS_KEY_PREFIX}tv_1396`, { name: "Squid Game" });
+    await cache.set(`${COLLECTION_KEY_PREFIX}99`, { parts: [] });
+    await cache.set(`${META_KEY_PREFIX}bookkeeping`, 1);
+    await cache.set(`${PUBLIC_KEY_PREFIX}discover_data`, { trending: [] });
+
+    await invalidateMediaCaches();
+
+    for (const key of [
+      "home_schedule",
+      "watchlist_progress_all",
+      "watchlist_ids",
+      "discover_watchlist_ids",
+    ]) {
+      expect(await cache.get(key)).toBeNull();
+    }
+    expect(await cache.get(`${MEDIA_DETAILS_KEY_PREFIX}tv_1396`)).toEqual({
+      name: "Squid Game",
+    });
+    expect(await cache.get(`${COLLECTION_KEY_PREFIX}99`)).toEqual({ parts: [] });
+    expect(await cache.get(`${META_KEY_PREFIX}bookkeeping`)).toBe(1);
+    expect(await cache.get(`${PUBLIC_KEY_PREFIX}discover_data`)).toEqual({
+      trending: [],
+    });
   });
 });
 

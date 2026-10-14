@@ -1,4 +1,8 @@
-import { Check, Lock, Plus } from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake.
+import Check from "lucide-react-native/icons/check";
+import Lock from "lucide-react-native/icons/lock";
+import Plus from "lucide-react-native/icons/plus";
 import React from "react";
 import { StyleSheet, View } from "react-native";
 

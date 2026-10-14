@@ -59,25 +59,67 @@ func currentUserVersion(userID uint) uint64 {
 // (another writer got there first), which is harmless: versions only need to be
 // monotonic, not unique per writer.
 func bumpUserVersion(userID uint) uint64 {
-	result := db.Model(&UserSyncState{}).
+	return bumpUserVersionTx(db, userID)
+}
+
+// bumpUserVersionTx is bumpUserVersion bound to a transaction, so a bulk write
+// advances the version exactly once inside the same transaction as its rows.
+func bumpUserVersionTx(tx *gorm.DB, userID uint) uint64 {
+	result := tx.Model(&UserSyncState{}).
 		Where("user_id = ?", userID).
 		UpdateColumn("version", gorm.Expr("version + 1"))
 
 	if result.Error == nil && result.RowsAffected > 0 {
-		return currentUserVersion(userID)
+		return currentUserVersionTx(tx, userID)
 	}
 
 	// No state row yet. It is created already advanced, so that the first
 	// mutation is observable as a version change.
-	if err := db.Create(&UserSyncState{
+	if err := tx.Create(&UserSyncState{
 		UserID:  userID,
 		Version: initialUserVersion + 1,
 	}).Error; err != nil {
 		// Lost a race with a concurrent creator; whatever is committed is
 		// authoritative.
-		return currentUserVersion(userID)
+		return currentUserVersionTx(tx, userID)
 	}
 	return initialUserVersion + 1
+}
+
+// currentUserVersionTx is currentUserVersion bound to a transaction.
+func currentUserVersionTx(tx *gorm.DB, userID uint) uint64 {
+	var state UserSyncState
+	if err := tx.First(&state, "user_id = ?", userID).Error; err != nil {
+		return initialUserVersion
+	}
+	if state.Version < initialUserVersion {
+		return initialUserVersion
+	}
+	return state.Version
+}
+
+// pendingSyncOp is a change-log entry that has been decided but not yet written.
+// Bulk writers collect these and persist them in one batch.
+type pendingSyncOp struct {
+	collection string
+	opType     string
+	entityKey  string
+	payload    any
+}
+
+// encodeSyncPayload renders an entity as the JSON a client stores. Returns ""
+// for a delete (nil payload) and for an entity that cannot be encoded, so a
+// single unserialisable row cannot abort a batch.
+func encodeSyncPayload(collection, entityKey string, payload any) string {
+	if payload == nil {
+		return ""
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Sync: failed to encode payload for %s/%s: %v", collection, entityKey, err)
+		return ""
+	}
+	return string(raw)
 }
 
 // recordSyncOp appends a change-log entry and returns the version it was
@@ -89,22 +131,13 @@ func bumpUserVersion(userID uint) uint64 {
 func recordSyncOp(userID uint, collection, opType, entityKey string, payload any) uint64 {
 	version := bumpUserVersion(userID)
 
-	encoded := ""
-	if payload != nil {
-		if raw, err := json.Marshal(payload); err == nil {
-			encoded = string(raw)
-		} else {
-			log.Printf("Sync: failed to encode payload for %s/%s: %v", collection, entityKey, err)
-		}
-	}
-
 	op := SyncOp{
 		UserID:     userID,
 		Version:    version,
 		Collection: collection,
 		OpType:     opType,
 		EntityKey:  entityKey,
-		Payload:    encoded,
+		Payload:    encodeSyncPayload(collection, entityKey, payload),
 		CreatedAt:  time.Now(),
 	}
 	if err := db.Create(&op).Error; err != nil {
@@ -115,12 +148,84 @@ func recordSyncOp(userID uint, collection, opType, entityKey string, payload any
 	return version
 }
 
+// recordSyncOpsTx writes a whole batch of change-log entries inside one
+// transaction at a single version.
+//
+// This replaces the per-item path for bulk writes, which called recordSyncOp
+// once per item and therefore: bumped the version once per item (retiring every
+// derived cache and every client's ETag N times), ran the COUNT+prune cycle N
+// times, and issued N single-row INSERTs. A 2,000-episode mark could push the
+// change log past its retention window on its own, forcing every other device
+// into a full resync.
+//
+// Returns false when the batch could not be recorded; the caller must treat
+// that as a failed request, not a partial success.
+func recordSyncOpsTx(tx *gorm.DB, userID uint, ops []pendingSyncOp) bool {
+	if len(ops) == 0 {
+		return true
+	}
+
+	version := bumpUserVersionTx(tx, userID)
+	now := time.Now()
+
+	rows := make([]SyncOp, 0, len(ops))
+	for _, op := range ops {
+		rows = append(rows, SyncOp{
+			UserID:     userID,
+			Version:    version,
+			Collection: op.collection,
+			OpType:     op.opType,
+			EntityKey:  op.entityKey,
+			Payload:    encodeSyncPayload(op.collection, op.entityKey, op.payload),
+			CreatedAt:  now,
+		})
+	}
+
+	if err := tx.CreateInBatches(&rows, 200).Error; err != nil {
+		log.Printf("Sync: failed to record %d changes for user %d: %v", len(rows), userID, err)
+		return false
+	}
+
+	pruneSyncOpsTx(tx, userID)
+	return true
+}
+
+// recordCollectionClearTx records that an entire collection was cleared and
+// truncates the change log so that entry is the resync boundary.
+//
+// The sentinel entry alone is not enough. needsFullResync decides from the
+// OLDEST retained entry, so an entry sitting mid-log would let a client with an
+// older cursor receive an ordinary delta: it would replay every earlier upsert
+// and end up holding rows the server has already deleted. Deleting the older
+// entries makes such a cursor fall out of the retention window, which is the
+// existing, well-tested signal for "drop your copy and sync from scratch".
+//
+// Returns false when the change could not be recorded; the caller must treat
+// that as a failed request.
+func recordCollectionClearTx(tx *gorm.DB, userID uint, collection string) bool {
+	if !recordSyncOpsTx(tx, userID, []pendingSyncOp{{
+		collection: collection,
+		opType:     syncOpDelete,
+		entityKey:  syncCollectionDeleteKey,
+	}}) {
+		return false
+	}
+
+	boundary := currentUserVersionTx(tx, userID)
+	return tx.Where("user_id = ? AND version < ?", userID, boundary).
+		Delete(&SyncOp{}).Error == nil
+}
+
 // pruneSyncOps trims a user's change log to the retention window, keeping the
 // newest entries. Runs opportunistically rather than on a timer so it costs
 // nothing when a user is idle.
 func pruneSyncOps(userID uint) {
+	pruneSyncOpsTx(db, userID)
+}
+
+func pruneSyncOpsTx(tx *gorm.DB, userID uint) {
 	var count int64
-	if err := db.Model(&SyncOp{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+	if err := tx.Model(&SyncOp{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
 		return
 	}
 	if count <= syncOpRetention {
@@ -129,7 +234,7 @@ func pruneSyncOps(userID uint) {
 
 	// Find the version at the retention boundary and delete everything older.
 	var boundary SyncOp
-	err := db.Where("user_id = ?", userID).
+	err := tx.Where("user_id = ?", userID).
 		Order("version DESC").
 		Offset(syncOpRetention - 1).
 		Limit(1).
@@ -138,7 +243,7 @@ func pruneSyncOps(userID uint) {
 		return
 	}
 
-	db.Where("user_id = ? AND version < ?", userID, boundary.Version).Delete(&SyncOp{})
+	tx.Where("user_id = ? AND version < ?", userID, boundary.Version).Delete(&SyncOp{})
 }
 
 // needsFullResync reports whether a client at cursor `since` can still be
@@ -205,6 +310,17 @@ func highestCollectionVersion(userID uint, collection string) uint64 {
 	}
 	return op.Version
 }
+
+// syncCollectionDeleteKey is the entity key of a change-log entry that means
+// "this whole collection was cleared", as opposed to one row being removed.
+//
+// A row-level delete names a media identity ("tv:1396:2:7"), and clients apply
+// it by removing exactly that row. "Clear my watch history" removes an
+// unbounded number of rows with no enumerable key list, so it is expressed as
+// one collection-level entry instead. Clients must recognise this sentinel and
+// drop the whole local collection; the old code recorded no entry at all, so
+// the client was never told anything had changed.
+const syncCollectionDeleteKey = "*"
 
 // mediaTypeForEntityKey normalizes the media type that goes into a change-log
 // key.

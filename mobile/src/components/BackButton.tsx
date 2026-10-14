@@ -1,4 +1,8 @@
-import { ChevronLeft } from "lucide-react-native";
+// Per-icon entry point: the package's root barrel re-exports all ~1,800 icon
+// modules and Metro does not tree-shake, so a named root import ships the lot.
+// The path form is the package's own `exports` map (`./icons/*`); see its
+// package.json.
+import ChevronLeft from "lucide-react-native/icons/chevron-left";
 import { Pressable, StyleSheet } from "react-native";
 
 interface BackButtonProps {

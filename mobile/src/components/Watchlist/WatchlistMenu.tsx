@@ -1,11 +1,12 @@
-import {
-  ArrowDownAZ,
-  Check,
-  Clock,
-  LayoutGrid,
-  List,
-  type LucideIcon,
-} from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake. `LucideIcon` is a
+// type only, erased at build time, and is not exported from that subpath.
+import ArrowDownAZ from "lucide-react-native/icons/arrow-down-a-z";
+import Check from "lucide-react-native/icons/check";
+import Clock from "lucide-react-native/icons/clock";
+import LayoutGrid from "lucide-react-native/icons/layout-grid";
+import List from "lucide-react-native/icons/list";
+import { type LucideIcon } from "lucide-react-native";
 import { useEffect } from "react";
 import { Pressable, StyleSheet, useColorScheme, View } from "react-native";
 import Animated, {

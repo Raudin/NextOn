@@ -5,7 +5,14 @@ import { type WatchedItem } from "@/lib/media-api";
 import { Group, SectionHeader } from "@/components/Profile/grouped-list";
 
 interface WatchActivityGraphProps {
-  items: WatchedItem[];
+  /**
+   * Watched titles per day, keyed the way `toDateKey` formats a day.
+   *
+   * The graph takes this reduced form rather than the history array because
+   * the array is the largest thing the profile screen holds, and the tally is
+   * the only thing this component ever needed from it.
+   */
+  dailyCounts: Map<string, number>;
 }
 
 const CELL = 11;
@@ -59,7 +66,15 @@ interface ActivityGrid {
   busiestDay: number;
 }
 
-function buildGrid(items: WatchedItem[]): ActivityGrid {
+/**
+ * Tallies a watch history into per-day counts.
+ *
+ * Exported because the profile screen reduces as soon as the fetch returns and
+ * never keeps the array: doing the reduction here rather than at that call
+ * site is what keeps the day key in one place, since a producer that formatted
+ * dates differently would silently empty the graph.
+ */
+export function countWatchedByDay(items: WatchedItem[]): Map<string, number> {
   const counts = new Map<string, number>();
 
   for (const item of items) {
@@ -71,6 +86,10 @@ function buildGrid(items: WatchedItem[]): ActivityGrid {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
+  return counts;
+}
+
+function buildGrid(counts: Map<string, number>): ActivityGrid {
   const today = startOfDay(new Date());
   // Start on the Sunday that opens the week 52 weeks back, so today lands in the
   // final column and the grid always ends on the current week.
@@ -148,11 +167,14 @@ function buildGrid(items: WatchedItem[]): ActivityGrid {
   return { weeks, monthLabels, total, busiestDay };
 }
 
-export default function WatchActivityGraph({ items }: WatchActivityGraphProps) {
+export default function WatchActivityGraph({ dailyCounts }: WatchActivityGraphProps) {
   const scrollRef = useRef<ScrollView>(null);
   const hasAutoScrolled = useRef(false);
 
-  const { weeks, monthLabels, total, busiestDay } = useMemo(() => buildGrid(items), [items]);
+  const { weeks, monthLabels, total, busiestDay } = useMemo(
+    () => buildGrid(dailyCounts),
+    [dailyCounts],
+  );
 
   return (
     <YStack gap={10} w="100%">

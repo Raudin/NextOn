@@ -1,16 +1,17 @@
 import React from "react";
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Bell,
-  ChevronRight,
-  ImageOff,
-  LogOut,
-  RotateCcw,
-  SunMoon,
-  Trash,
-  type LucideIcon,
-} from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake. `LucideIcon` is a
+// type only, erased at build time, and is not exported from that subpath.
+import Bell from "lucide-react-native/icons/bell";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
+import ImageOff from "lucide-react-native/icons/image-off";
+import LogOut from "lucide-react-native/icons/log-out";
+import RotateCcw from "lucide-react-native/icons/rotate-ccw";
+import SunMoon from "lucide-react-native/icons/sun-moon";
+import Trash from "lucide-react-native/icons/trash";
+import { type LucideIcon } from "lucide-react-native";
 import { Button, Text, XStack, YStack } from "tamagui";
 import { clearImageCache } from "@/lib/image-cache";
 import { type User } from "@/lib/media-api";

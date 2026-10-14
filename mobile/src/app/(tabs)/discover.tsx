@@ -1,5 +1,5 @@
 import { useAuth } from "@/context/AuthContext";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useIsFocused, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -19,7 +19,8 @@ import { setTelemetryScreen } from "@/lib/telemetry";
 import {
   addToWatchlist,
   fetchDiscover,
-  fetchWatchlist,
+  fetchWatchlistIds,
+  rememberWatchlistIds,
   releaseYear,
   removeFromWatchlist,
   searchMedia,
@@ -35,12 +36,103 @@ const SEARCH_COLUMNS = 3;
 const SEARCH_GRID_GAP = 16;
 const SCREEN_PADDING_X = 18;
 
+/**
+ * Runs the Discover search and classifies the outcome.
+ *
+ * Module-level so the `try`/`catch` is not inside the component: React
+ * Compiler's `BuildHIR` rejects any function containing a `try` with a
+ * `finally` clause, and then skips the ENTIRE component. The abort predicate
+ * lives here because it is part of deciding what the outcome *is*; keeping it
+ * out of the component also stops the effect's callback from carrying a
+ * `finally`.
+ *
+ * An aborted search is not an error — it means the query changed again before
+ * this one answered — so it is reported distinctly rather than as a failure.
+ */
+type DiscoverSearchOutcome =
+  | { status: "results"; results: TMDBMedia[] }
+  | { status: "aborted" }
+  | { status: "error"; message: string };
+
+const isSearchAbort = (err: any): boolean => {
+  const message = String(err?.message ?? "").toLowerCase();
+  return (
+    err?.name === "AbortError" ||
+    err?.name === "CanceledError" ||
+    message.includes("aborted") ||
+    message.includes("cancel")
+  );
+};
+
+async function runDiscoverSearch(
+  query: string,
+  signal: AbortSignal,
+): Promise<DiscoverSearchOutcome> {
+  try {
+    return { status: "results", results: await searchMedia(query, signal) };
+  } catch (err: any) {
+    if (isSearchAbort(err)) {
+      return { status: "aborted" };
+    }
+    return { status: "error", message: err?.message || String(err) };
+  }
+}
+
+/**
+ * Reads the Discover feed (and, when signed in, the watchlist ids).
+ *
+ * Same reasoning as `runDiscoverSearch`: the component must not contain a
+ * `try`/`finally`. Errors are returned so the caller needs no `try`, and the
+ * caller decides whether a failure is worth showing — a background
+ * revalidation failure with cached data on screen is not.
+ */
+type DiscoverFetchOutcome =
+  | { status: "ok"; discover: DiscoverResponse; watchlistIds: number[] }
+  | { status: "error"; message: string };
+
+async function fetchDiscoverForScreen(
+  token: string | null,
+): Promise<DiscoverFetchOutcome> {
+  try {
+    let discover: DiscoverResponse;
+    let watchlistIds: number[] = [];
+
+    if (token) {
+      // Two independent requests, run together. The watchlist is fetched for
+      // its ids only, and `fetchWatchlistIds` answers from cache once any
+      // screen has loaded the list — so this is usually one request, not two.
+      const [disc, wlIds] = await Promise.all([
+        fetchDiscover(),
+        fetchWatchlistIds(),
+      ]);
+      discover = disc;
+      watchlistIds = wlIds;
+    } else {
+      discover = await fetchDiscover();
+    }
+
+    return { status: "ok", discover, watchlistIds };
+  } catch (err: any) {
+    return { status: "error", message: err?.message || String(err) };
+  }
+}
+
 export default function DiscoverScreen() {
   const { push } = useRouter();
   const { token } = useAuth();
   const { width } = useWindowDimensions();
   const [data, setData] = useState<DiscoverResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  /**
+   * Starts false, not true.
+   *
+   * The tab navigator mounts every tab at launch, so an initial `true` claimed
+   * a load that had not started on screens the user had never opened — and the
+   * orb, which is gated on this flag, animated from startup on all of them.
+   * The flag is now claimed by the focus effect below, which is where the load
+   * actually begins; a slow load still shows the orb, and the branches under
+   * the orb account for the debounce window that opens up as a result.
+   */
+  const [loading, setLoading] = useState(false);
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +146,11 @@ export default function DiscoverScreen() {
   // true between the 300ms debounce firing and the response landing, so the
   // beam covers the whole search without any extra state.
   const { typing, markTyping, stopTyping } = useTypingActivity();
+
+  // The tab stays mounted after the user leaves it, and the beam's clock is a
+  // real per-frame loop, so it has to be told when the screen is off-screen.
+  // Same signal `LoadingOrb` uses for the same reason.
+  const isFocused = useIsFocused();
 
   // What the screen should render, rather than raw `loading`: the orb is held
   // back for 150ms so a cached payload never flashes it for two frames, and
@@ -78,49 +175,46 @@ export default function DiscoverScreen() {
       setLoading(true);
     }
 
-    try {
-      let discover: DiscoverResponse;
-      let watchlistIdsArr: number[] = [];
+    // No try/finally in the component: see `fetchDiscoverForScreen`.
+    const outcome = await fetchDiscoverForScreen(token);
 
-      if (token) {
-        const [disc, wl] = await Promise.all([
-          fetchDiscover(),
-          fetchWatchlist(),
-        ]);
-        discover = disc;
-        watchlistIdsArr = wl.map((item) => item.id);
-      } else {
-        discover = await fetchDiscover();
-      }
-
+    if (outcome.status === "ok") {
       // 2 hours TTL for discover cache
       const TTL_2_HOURS = 2 * 60 * 60 * 1000;
-      await cache.set("public_discover_data", discover, TTL_2_HOURS);
+      await cache.set("public_discover_data", outcome.discover, TTL_2_HOURS);
       if (token) {
-        await cache.set("discover_watchlist_ids", watchlistIdsArr, TTL_2_HOURS);
+        await cache.set(
+          "discover_watchlist_ids",
+          outcome.watchlistIds,
+          TTL_2_HOURS,
+        );
       }
 
-      setData(discover);
-      setWatchlistIds(new Set(watchlistIdsArr));
+      setData(outcome.discover);
+      setWatchlistIds(new Set(outcome.watchlistIds));
       setError(null);
-    } catch (err: any) {
-      // Only show full screen error if we don't have cached data to show
-      if (!cachedData) {
-        setError(
-          `${err.message || String(err)}. Check your connection and try again.`,
-        );
-      } else {
-        console.warn("Silent discover background revalidation failed:", err);
-      }
-    } finally {
-      setLoading(false);
-      setBackgroundRefreshing(false);
+    } else if (!cachedData) {
+      // Only worth surfacing when there is nothing on screen to keep showing.
+      setError(`${outcome.message}. Check your connection and try again.`);
+    } else {
+      console.warn(
+        "Silent discover background revalidation failed:",
+        outcome.message,
+      );
     }
+
+    setLoading(false);
+    setBackgroundRefreshing(false);
   }, [token]);
 
   useFocusEffect(
     React.useCallback(() => {
       setTelemetryScreen("discover");
+      // Claim the load here, synchronously, so the orb's 150ms debounce starts
+      // when the user actually reaches the tab rather than after the cache
+      // read resolves. A genuinely slow load still shows the orb; the cache
+      // read below releases the flag as soon as it produces something to draw.
+      setLoading(true);
       loadDiscover(false);
     }, [loadDiscover]),
   );
@@ -138,22 +232,18 @@ export default function DiscoverScreen() {
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
       setSearching(true);
-      try {
-        const results = await searchMedia(query, controller.signal);
-        setSearchResults(results);
-      } catch (err: any) {
-        const isAbort =
-          err.name === "AbortError" ||
-          err.name === "CanceledError" ||
-          err.message?.toLowerCase().includes("aborted") ||
-          err.message?.toLowerCase().includes("cancel");
 
-        if (!isAbort) {
-          setError(err.message || String(err));
-        }
-      } finally {
-        setSearching(false);
+      const outcome = await runDiscoverSearch(query, controller.signal);
+
+      if (outcome.status === "results") {
+        setSearchResults(outcome.results);
+      } else if (outcome.status === "error") {
+        setError(outcome.message);
       }
+      // An aborted search is silent by design: the query changed again, so this
+      // answer was already superseded.
+
+      setSearching(false);
     }, 300);
 
     return () => {
@@ -175,7 +265,7 @@ export default function DiscoverScreen() {
       updatedIds.add(item.id);
     }
     setWatchlistIds(updatedIds);
-    await cache.set("discover_watchlist_ids", Array.from(updatedIds));
+    await rememberWatchlistIds(Array.from(updatedIds));
 
     try {
       if (exists) {
@@ -183,16 +273,17 @@ export default function DiscoverScreen() {
       } else {
         await addToWatchlist(item);
       }
-      // Invalidate dependent caches (Home schedule, Watchlist, Discover).
+      // Invalidate dependent caches (Home schedule, Watchlist, Discover badges).
       await invalidateMediaCaches();
-      // The invalidation clears the discover badge cache too; restore it with
-      // the already-updated id set so badges stay correct in this session.
-      await cache.set("discover_watchlist_ids", Array.from(updatedIds));
+      // The invalidation clears the derived id set too; restore the
+      // already-updated one so badge state stays correct for this session
+      // without another request.
+      await rememberWatchlistIds(Array.from(updatedIds));
     } catch {
       // Revert on error
       const revertedIds = new Set(watchlistIds);
       setWatchlistIds(revertedIds);
-      await cache.set("discover_watchlist_ids", Array.from(revertedIds));
+      await rememberWatchlistIds(Array.from(revertedIds));
     }
   };
 
@@ -272,6 +363,7 @@ export default function DiscoverScreen() {
                 theme={isLight ? "light" : "dark"}
                 borderRadius={25}
                 active={typing || searching}
+                visible={isFocused}
               >
                 <SearchField
                   value={searchQuery}
@@ -293,6 +385,12 @@ export default function DiscoverScreen() {
             All three branches below gate on `showLoadingUI`, not `loading`:
             while the deferred flag is down they must agree, or the error or
             content branch would paint underneath the orb.
+
+            The content branch also requires `!loading`, because the deferred
+            flag is down for the first 150ms of every load. Without it, the
+            three carousels would paint empty for that window on a tab whose
+            first load had not finished — a flash of "nothing to show" that the
+            screen never used to produce, when `loading` was true from launch.
           */}
           {showLoadingUI ? <LoadingOrb label="Loading media..." /> : null}
 
@@ -305,7 +403,7 @@ export default function DiscoverScreen() {
               </Button>
             </YStack> : null}
 
-          {!showLoadingUI && !error && (
+          {!showLoadingUI && !loading && !error && (
             /**
              * A plain vertical ScrollView, deliberately.
              *

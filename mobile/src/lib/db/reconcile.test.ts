@@ -1,5 +1,6 @@
 import {
   buildPendingOverlay,
+  EMPTY_OVERLAY,
   emptyOverlay,
   idFromPath,
   overlayIsEmpty,
@@ -285,5 +286,40 @@ describe("emptyOverlay", () => {
     a.watchedAdded.add("movie:1");
     // Sharing one instance would leak state between screens.
     expect(overlayIsEmpty(b)).toBe(true);
+  });
+});
+
+describe("buildPendingOverlay for an empty queue", () => {
+  it("returns the shared constant, so state does not churn", () => {
+    // This is what makes `usePendingOverlay` cheap. It assigns the result into
+    // React state, and an empty queue is the overwhelmingly common case; a
+    // fresh object per call meant `setOverlay` always saw a change, so every
+    // consumer re-rendered on every reload even with nothing queued.
+    expect(buildPendingOverlay([])).toBe(EMPTY_OVERLAY);
+  });
+
+  it("returns the same reference across repeated calls", () => {
+    expect(buildPendingOverlay([])).toBe(buildPendingOverlay([]));
+  });
+
+  it("returns a fresh object once something is queued", () => {
+    const entry = {
+      id: 1,
+      method: "POST",
+      path: "/api/watchlist",
+      body: '{"id":603}',
+      createdAt: 1,
+      attempts: 0,
+    };
+
+    const built = buildPendingOverlay([entry]);
+    expect(built).not.toBe(EMPTY_OVERLAY);
+    expect(overlayIsEmpty(built)).toBe(false);
+  });
+
+  it("is frozen, so a consumer cannot corrupt every other consumer's view", () => {
+    // The constant is shared by every screen; a mutation would be visible
+    // everywhere at once, which is why it is frozen rather than merely reused.
+    expect(Object.isFrozen(EMPTY_OVERLAY)).toBe(true);
   });
 });

@@ -272,8 +272,8 @@ func (c *routeCallCollector) Collect(ch chan<- prometheus.Metric) {
 // and the elapsed time in hand, so this adds one label lookup and no allocation
 // on the happy path.
 func observeHTTPRequest(route, method string, status int, elapsed time.Duration, responseBytes int) {
-	httpRequestsTotal.WithLabelValues(route, method, strconv.Itoa(status)).Inc()
-	httpRequestDuration.WithLabelValues(route, method).Observe(elapsed.Seconds())
+	httpRequestsTotal.WithLabelValues(route, normalizeHTTPMethod(method), strconv.Itoa(status)).Inc()
+	httpRequestDuration.WithLabelValues(route, normalizeHTTPMethod(method)).Observe(elapsed.Seconds())
 
 	// gin reports -1 when the handler never wrote a body (an aborted request,
 	// for instance). Recording that as a negative observation would be a lie
@@ -282,6 +282,26 @@ func observeHTTPRequest(route, method string, status int, elapsed time.Duration,
 		responseBytes = 0
 	}
 	httpResponseSize.WithLabelValues(route).Observe(float64(responseBytes))
+}
+
+// normalizeHTTPMethod bounds the `method` label to the handful of values the
+// server actually serves.
+//
+// The label was taken straight from the request, which makes its cardinality
+// attacker-controlled: each distinct value creates a new time series that is
+// never retired, so a client sending `FOO1`, `FOO2`, … could grow the registry
+// without limit until the process ran out of memory. Prometheus works on the
+// same principle as the route label — both must come from a closed set.
+func normalizeHTTPMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodHead, http.MethodOptions:
+		return method
+	default:
+		// Anything else is not a method this API serves. Bucketing it keeps the
+		// series count fixed while still showing that something odd arrived.
+		return "OTHER"
+	}
 }
 
 // metricsHandler returns the exposition handler.

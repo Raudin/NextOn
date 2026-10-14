@@ -5,18 +5,18 @@ import { imageCachePolicy, imageTransitionMs, imageUrl } from "@/lib/images";
 import { getNextAirLabel } from "@/lib/schedule";
 import { setTelemetryScreen } from "@/lib/telemetry";
 import { Image } from "expo-image";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Calendar,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Clapperboard,
-  Heart,
-  Lock,
-  Plus,
-} from "lucide-react-native";
+import { useLocalSearchParams, useNavigationContainerRef, useRouter } from "expo-router";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake.
+import Calendar from "lucide-react-native/icons/calendar";
+import Check from "lucide-react-native/icons/check";
+import ChevronDown from "lucide-react-native/icons/chevron-down";
+import ChevronUp from "lucide-react-native/icons/chevron-up";
+import Clapperboard from "lucide-react-native/icons/clapperboard";
+import Heart from "lucide-react-native/icons/heart";
+import Lock from "lucide-react-native/icons/lock";
+import Plus from "lucide-react-native/icons/plus";
 import {
   Linking,
   Platform,
@@ -39,8 +39,7 @@ import {
   fetchMediaDetails,
   fetchSeasonEpisodes,
   fetchWatchedStatus,
-  fetchWatchlist,
-  markWatched,
+  fetchWatchlistIds,  markWatched,
   markWatchedBulk,
   mediaTitle,
   removeFromFavorites,
@@ -60,8 +59,29 @@ import LoadingOrb from "@/components/LoadingOrb";
 import MediaToggleBadge from "@/components/MediaToggleBadge";
 import WatchProgressBar from "@/components/Watchlist/WatchProgressBar";
 
+/** The route name the root stack files this screen under. */
+const MEDIA_DETAIL_ROUTE = "media/[type]/[id]";
+
+/**
+ * How many cast members the row renders.
+ *
+ * The block is a plain horizontal `ScrollView`, so every entry mounts at once:
+ * TMDB returns 50-150 for a long-running show, and each one carries a `w185`
+ * headshot. Capping the list is the cheapest fix that keeps the row's look —
+ * virtualizing it would change the card layout for a row most users never
+ * scroll past the first screenful of anyway.
+ */
+const MAX_CAST_IN_ROW = 15;
+
 export default function MediaDetailScreen() {
-  const { back, push } = useRouter();
+  const { back, push, replace } = useRouter();
+  /**
+   * The root navigation container, read only to count how deep the detail
+   * chain has got. `useLocalSearchParams` cannot answer that, and a
+   * module-level counter could not follow back-navigation: the navigator is
+   * the only thing that knows when a screen has been popped.
+   */
+  const navigationRef = useNavigationContainerRef();
   const insets = useSafeAreaInsets();
   /**
    * Android ignores `contentInsetAdjustmentBehavior` (the prop is iOS-only), so
@@ -211,18 +231,22 @@ export default function MediaDetailScreen() {
     setError(null);
     try {
       if (token) {
-        const [detailsData, watchlist, watchedStatus, favoriteStatus] =
+        // The watchlist is fetched for membership only, through the cached id
+        // index: this screen needs to know whether one title is in the list,
+        // and used to download every field of every row to find out, on a cold
+        // cache, on every open.
+        const [detailsData, watchlistIds, watchedStatus, favoriteStatus] =
           await Promise.all([
             fetchMediaDetails(params.type, params.id),
-            fetchWatchlist(),
+            fetchWatchlistIds(),
             fetchWatchedStatus(params.id, params.type, {
               includeTvProgress: isTv,
             }),
             fetchFavoriteStatus(params.id),
           ]);
         setDetails(detailsData);
-        setInWatchlist(watchlist.some((item) => item.id === detailsData.id));
-        setWatchlistIds(new Set(watchlist.map((item) => item.id)));
+        setInWatchlist(watchlistIds.includes(detailsData.id));
+        setWatchlistIds(new Set(watchlistIds));
         setFavorited(favoriteStatus.favorited ?? false);
         setTvProgress(watchedStatus.tv_progress ?? null);
         if (isMovie) {
@@ -340,6 +364,26 @@ export default function MediaDetailScreen() {
     };
   }, [collectionId]);
 
+  /**
+   * How many media detail screens are on the root stack right now.
+   *
+   * Guarded rather than asserted: the container ref only carries a live
+   * navigator once it has mounted, and a press handler must never be able to
+   * throw. An unreadable state counts as zero, which degrades to the old
+   * push behaviour.
+   */
+  const countMediaDetailRoutes = useCallback((): number => {
+    try {
+      const state = navigationRef.getRootState();
+      return (
+        state?.routes.filter((route) => route.name === MEDIA_DETAIL_ROUTE)
+          .length ?? 0
+      );
+    } catch {
+      return 0;
+    }
+  }, [navigationRef]);
+
   /** Opens a card from the collection or related rows. */
   const openRelated = useCallback(
     (item: TMDBMedia) => {
@@ -347,12 +391,25 @@ export default function MediaDetailScreen() {
       // so an item that arrives without a media type must not be guessed as a
       // movie — that would open a completely different title.
       const type = item.media_type || (item.title ? "movie" : "tv");
-      push({
+      const href = {
         pathname: "/media/[type]/[id]",
         params: { type, id: String(item.id) },
-      } as any);
+      } as any;
+
+      // Browsing "Related" is a chain, and every hop used to push a new screen:
+      // each level holds a hero image, poster carousels, cast avatars and the
+      // whole details payload, so the stack — and the memory behind it — grew
+      // for as long as the user kept tapping. The first hop stays a push so
+      // back still leaves the chain the way the user entered it; from the
+      // second detail screen onward the next title replaces the current one,
+      // which keeps the chain two deep however long it gets.
+      if (countMediaDetailRoutes() >= 2) {
+        replace(href);
+      } else {
+        push(href);
+      }
     },
-    [push],
+    [countMediaDetailRoutes, push, replace],
   );
 
   /**
@@ -1252,7 +1309,7 @@ export default function MediaDetailScreen() {
                       showsHorizontalScrollIndicator={false}
                     >
                       <XStack gap="$4">
-                        {(details.cast ?? []).map((member) => (
+                        {(details.cast ?? []).slice(0, MAX_CAST_IN_ROW).map((member) => (
                           <YStack key={member.id} w={100} ai="center" gap="$2">
                             <YStack
                               w={76}
@@ -1512,8 +1569,8 @@ function SeasonCard({
                     `${episode.season_number}:${episode.episode_number}`,
                   )}
                   isLast={isLast}
-                  onPress={() => onOpenEpisode(episode)}
-                  onToggle={() => onToggleEpisode(episode, episodes)}
+                  onPress={onOpenEpisode}
+                  onToggle={(ep) => onToggleEpisode(ep, episodes)}
                 />
               );
             })
@@ -1523,7 +1580,23 @@ function SeasonCard({
   );
 }
 
-function EpisodeRowListItem({
+/**
+ * One episode row.
+ *
+ * Wrapped in `memo` and given handlers that take the episode as an argument so
+ * that marking one episode watched re-renders only that row.
+ *
+ * The handlers used to be closures created per row per render
+ * (`() => onToggleEpisode(episode, episodes)`), which is a new function
+ * identity every time — so even a memoised row could never skip, and every
+ * toggle re-rendered the whole season. Passing the stable parent handler and
+ * letting the row supply its own episode keeps the identity fixed, which is
+ * what makes the memo effective.
+ *
+ * React Compiler does not help here: the compiler cannot make an inline
+ * closure's identity stable, because that would change observable behaviour.
+ */
+const EpisodeRowListItem = memo(function EpisodeRowListItem({
   episode,
   showDetails,
   watched,
@@ -1535,8 +1608,8 @@ function EpisodeRowListItem({
   showDetails: MediaDetails;
   watched: boolean;
   isLast: boolean;
-  onPress: () => void;
-  onToggle: () => void;
+  onPress: (episode: Episode) => void;
+  onToggle: (episode: Episode) => void;
 }) {
   const formattedDate = useMemo(() => {
     if (!episode.air_date) return "";
@@ -1585,7 +1658,7 @@ function EpisodeRowListItem({
         py="$3"
         gap="$3"
         pressStyle={{ opacity: 0.85 }}
-        onPress={onPress}
+        onPress={() => onPress(episode)}
       >
         {/* Left: Thumbnail Still Image */}
         <View style={styles.episodeThumb}>
@@ -1675,7 +1748,7 @@ function EpisodeRowListItem({
               onPress={(e) => {
                 if (epUnreleased) return;
                 e.stopPropagation();
-                onToggle();
+                onToggle(episode);
               }}
               hitSlop={8}
               accessibilityRole="button"
@@ -1697,4 +1770,4 @@ function EpisodeRowListItem({
       {!isLast && <YStack height={1} bg="$borderColor" opacity={0.2} />}
     </YStack>
   );
-}
+});

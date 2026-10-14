@@ -16,6 +16,7 @@ import {
 import { padTo } from './rotateShader';
 import { lineFrameValues, multValue, pingPongWorklet, type LineKeyframeTables } from './lineDriver';
 import type { BorderBeamColorVariant } from './types';
+import { useBorderBeamClock } from './useBorderBeamClock';
 
 function makeBlobEffect() {
   const effect = Skia.RuntimeEffect.Make(BLOB_LAYER_SKSL);
@@ -55,8 +56,9 @@ export interface LineBeamProps {
   strength: number;
   width: number;
   height: number;
-  clock: SharedValue<number>;
   fade: SharedValue<number>;
+  /** Whether the beam's clock should run. @default true */
+  clockActive?: boolean;
 }
 
 /**
@@ -75,9 +77,12 @@ export function LineBeam({
   strength,
   width,
   height,
-  clock,
   fade,
+  clockActive = true,
 }: LineBeamProps) {
+  // Owned here rather than by BorderBeam: this component only mounts while the
+  // beam is drawn, so the clock cannot outlive the effect.
+  const clock = useBorderBeamClock(clockActive);
   const spec = beamSpec;
   const preset = sizePreset('line');
   const colors = themePreset('line', theme);

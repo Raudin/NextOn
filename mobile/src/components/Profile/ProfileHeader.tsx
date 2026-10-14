@@ -1,7 +1,10 @@
 import React from "react";
 import { StyleSheet } from "react-native";
 import { Image } from "expo-image";
-import { Pencil, Settings } from "lucide-react-native";
+// Per-icon entry points (`./icons/*` in the package's exports map): the root
+// barrel re-exports every icon and Metro does not tree-shake.
+import Pencil from "lucide-react-native/icons/pencil";
+import Settings from "lucide-react-native/icons/settings";
 import { Avatar, Button, Input, ScrollView, Spinner, Text, XStack, YStack } from "tamagui";
 import { type User, type ProfileStats } from "@/lib/media-api";
 import { imageCachePolicy, imageTransitionMs } from "@/lib/images";

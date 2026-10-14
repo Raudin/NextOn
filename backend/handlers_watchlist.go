@@ -89,7 +89,7 @@ func handleGetWatchlist(c *gin.Context) {
 	filterWatched := c.Query("filter_watched") == "true"
 	includeProgress := c.Query("include") == "progress"
 
-	cachedJSONResponse(c, watchlistCacheKey(userUID, filterWatched, includeProgress), watchlistCacheTTL, func() (any, bool) {
+	cachedJSONResponse(c, watchlistCacheKeyAt(userUID, currentUserVersionFor(c, userUID), filterWatched, includeProgress), watchlistCacheTTL, func() (any, bool) {
 		return buildWatchlist(c, userUID, filterWatched, includeProgress)
 	})
 }
@@ -143,9 +143,20 @@ func buildWatchlist(c *gin.Context, userUID uint, filterWatched, includeProgress
 	fullyWatched := make([]bool, len(items))
 
 	if filterWatched || includeProgress {
+		// One set for the whole request, so the movie check is a map lookup
+		// rather than a scan of the user's entire history per movie. The old
+		// per-movie linear scan made this O(watchlist x history).
+		watchedMovieIDs := make(map[int64]struct{}, len(watched))
+		for _, w := range watched {
+			if w.MediaType == "movie" {
+				watchedMovieIDs[w.MediaID] = struct{}{}
+			}
+		}
+
 		for i, item := range items {
 			if watchlistMediaType(item) != "tv" && filterWatched {
-				fullyWatched[i] = isMovieFullyWatched(item, watched)
+				_, ok := watchedMovieIDs[item.ID]
+				fullyWatched[i] = ok
 			}
 		}
 

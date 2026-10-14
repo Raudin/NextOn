@@ -155,8 +155,13 @@ export async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
  */
 export const clearLocalUserData = async (): Promise<void> => {
   const db = await getLocalDatabase();
-  await db.withTransactionAsync(async () => {
-    await db.execAsync(
+  // Exclusive, and every statement runs on the transaction's own handle.
+  // The non-exclusive form shares one connection with everything else in the
+  // app, so a concurrent writer could have its statements pulled into this
+  // transaction and then discarded by its commit — or, worse, have a partially
+  // cleared session survive. Nothing here is safe to run on the shared handle.
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.execAsync(
       "DELETE FROM watchlist; DELETE FROM favorites; DELETE FROM watched; DELETE FROM outbox; DELETE FROM sync_state;",
     );
   });

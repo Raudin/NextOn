@@ -263,6 +263,12 @@ export default function UpNextCard({
         id: String(show.id),
         season: String(episode.season_number),
         episode: String(episode.episode_number),
+        // Already loaded here for the next-episode lookup, so the episode
+        // screen can take its hero fallback from the navigation instead of
+        // fetching the whole show record again. See that route's `params` note.
+        showBackdropPath:
+          showDetails?.backdrop_path || show.backdrop_path || undefined,
+        showPosterPath: showDetails?.poster_path || show.poster_path || undefined,
       },
     } as any);
   };

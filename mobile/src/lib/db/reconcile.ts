@@ -51,6 +51,28 @@ export const emptyOverlay = (): PendingOverlay => ({
 });
 
 /**
+ * The shared "nothing pending" overlay.
+ *
+ * A single frozen instance rather than a fresh object, because it is returned
+ * from `buildPendingOverlay` — and therefore assigned into React state — for
+ * every call where the queue is empty, which is the overwhelmingly common case.
+ * Returning a new object each time meant `setOverlay` always saw a changed
+ * value, so every consumer re-rendered on every reload even when nothing had
+ * been queued. A stable reference lets that update be skipped entirely.
+ *
+ * Frozen so that a future caller mutating what it got back fails loudly in
+ * development instead of silently corrupting every other consumer's view.
+ */
+export const EMPTY_OVERLAY: PendingOverlay = Object.freeze({
+  watchedAdded: new Set<WatchedKey>(),
+  watchedRemoved: new Set<WatchedKey>(),
+  watchlistAdded: new Map<number, TMDBMedia>(),
+  watchlistRemovedIds: new Set<number>(),
+  favoriteRemovedIds: new Set<number>(),
+  watchHistoryCleared: false,
+}) as PendingOverlay;
+
+/**
  * Normalises the media type the way the rest of the app does.
  *
  * `TMDBMedia.media_type` is optional in list payloads, and a mismatched type
@@ -232,7 +254,7 @@ export const buildPendingOverlay = (entries: OutboxEntry[]): PendingOverlay => {
     }
   }
 
-  return overlay;
+  return overlayIsEmpty(overlay) ? EMPTY_OVERLAY : overlay;
 }
 
 /**
