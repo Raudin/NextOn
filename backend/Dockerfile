@@ -45,7 +45,8 @@ RUN apk --no-cache add ca-certificates tzdata wget
 RUN mkdir -p /data && \
     addgroup -S -g 10001 nexton && \
     adduser -S -u 10001 -G nexton -H -s /sbin/nologin nexton && \
-    chown -R nexton:nexton /data
+    chown -R nexton:nexton /data && \
+    chmod 777 /data
 
 WORKDIR /app
 
