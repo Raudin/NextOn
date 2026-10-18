@@ -77,7 +77,7 @@ USER nexton
 # Liveness only: readiness (which also pings the database) is at /ready, and a
 # failing readiness should take the container out of rotation rather than make
 # the orchestrator restart it.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
+# HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+#    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
 
 CMD ["/app/nexton"]
