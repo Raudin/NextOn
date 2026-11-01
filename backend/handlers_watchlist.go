@@ -90,19 +90,21 @@ func handleGetWatchlist(c *gin.Context) {
 	includeProgress := c.Query("include") == "progress"
 
 	cachedJSONResponse(c, watchlistCacheKeyAt(userUID, currentUserVersionFor(c, userUID), filterWatched, includeProgress), watchlistCacheTTL, func() (any, bool) {
-		return buildWatchlist(c, userUID, filterWatched, includeProgress)
+		result, err := buildWatchlistPayload(userUID, filterWatched, includeProgress, scopeFrom(c))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return nil, false
+		}
+		return result, true
 	})
 }
 
-// buildWatchlist does the actual work. It reports ok=false only after writing an
-// error response itself.
-func buildWatchlist(c *gin.Context, userUID uint, filterWatched, includeProgress bool) (any, bool) {
-	scope := scopeFrom(c)
-
+// buildWatchlistPayload does the actual work without any HTTP concerns, so the
+// same code can serve a request or warm the cache after a mutation.
+func buildWatchlistPayload(userUID uint, filterWatched, includeProgress bool, scope *callScope) (any, error) {
 	var dbItems []WatchlistItem
 	if err := db.Where("user_id = ?", userUID).Find(&dbItems).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch watchlist"})
-		return nil, false
+		return nil, fmt.Errorf("Failed to fetch watchlist")
 	}
 
 	items := make([]TMDBMedia, 0, len(dbItems))

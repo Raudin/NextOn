@@ -153,6 +153,12 @@ type metricsRegistry struct {
 	redisMisses atomic.Int64
 	redisErrors atomic.Int64
 
+	// Whole-response cache tier counters (see response_cache.go). localHits is
+	// the in-process tier; coalesced counts requests served by parking on a
+	// concurrent build instead of starting their own.
+	localResponseHits atomic.Int64
+	responseCoalesced atomic.Int64
+
 	mu     sync.RWMutex
 	routes map[string]*routeStat
 }
@@ -249,6 +255,18 @@ func (m *metricsRegistry) recordOMDbStore(hit bool) {
 	m.omdbStoreMiss.Add(1)
 }
 
+// recordLocalResponseHit records a whole-response payload served from the
+// in-process tier of cachedJSONResponse.
+func (m *metricsRegistry) recordLocalResponseHit() {
+	m.localResponseHits.Add(1)
+}
+
+// recordResponseCoalesced records a request served by joining a concurrent
+// build of the same payload instead of starting its own.
+func (m *metricsRegistry) recordResponseCoalesced() {
+	m.responseCoalesced.Add(1)
+}
+
 // routeSnapshot is the JSON shape for one route in /api/debug/stats.
 type routeSnapshot struct {
 	Route             string  `json:"route"`
@@ -309,6 +327,8 @@ func (m *metricsRegistry) snapshot() gin.H {
 			"redis_hits":        m.redisHits.Load(),
 			"redis_misses":      m.redisMisses.Load(),
 			"redis_errors":      m.redisErrors.Load(),
+			"response_local_hits":  m.localResponseHits.Load(),
+			"response_coalesced":   m.responseCoalesced.Load(),
 		},
 		"routes": rows,
 	}

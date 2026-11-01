@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 // Helpers for caching whole JSON responses.
@@ -29,35 +32,207 @@ const (
 	watchlistCacheTTL = 60 * time.Second
 )
 
-// cachedJSONResponse serves a JSON payload from Redis when possible, otherwise
-// builds it, stores it, and serves it.
+// responsePayloadCache is the in-process tier of whole-response caching.
+//
+// Without it, every request that misses Redis — which includes *all* requests
+// on a deployment without REDIS_URL — rebuilds the payload from scratch. For
+// the Home schedule that means one TMDB lookup per watchlist title on every
+// screen entry, even though consecutive requests from the same user build a
+// byte-identical payload. The TTL is short, so this tier only absorbs repeats
+// inside one cache window; correctness still comes from the version-keyed
+// cache key and the TTL.
+type responsePayloadCache struct {
+	entries *expirable.LRU[string, []byte]
+
+	// inflight coalesces concurrent builders for the same key. Two devices of
+	// one user opening Home simultaneously must cost one rebuild, not two.
+	inflightMu sync.Mutex
+	inflight   map[string]*responseCall
+}
+
+type responseCall struct {
+	done    chan struct{}
+	payload []byte
+	built   bool // false when build() wrote an error response itself
+}
+
+const (
+	// responseCacheEntries bounds the tier by count. Keys are (endpoint, user,
+	// version) tuples, so working set size is roughly active users x a few
+	// query variants.
+	responseCacheEntries = 2048
+
+	// responseBuildWaitMax bounds how long a coalesced waiter parks on another
+	// request's build. Past this the waiter rebuilds independently rather than
+	// inherit a stalled request's latency. A cold Home build with a large
+	// watchlist can legitimately take several seconds, so the bound is generous.
+	responseBuildWaitMax = 10 * time.Second
+)
+
+var responseCache = func() *responsePayloadCache {
+	lru := expirable.NewLRU[string, []byte](responseCacheEntries, nil, 0)
+	return &responsePayloadCache{
+		entries:  lru,
+		inflight: make(map[string]*responseCall),
+	}
+}()
+
+// cachedJSONResponse serves a JSON payload from the in-process cache, then
+// Redis, otherwise builds it, stores it in both tiers, and serves it.
 //
 // Invariants:
 //   - Redis being unavailable means "always miss", never an error.
 //   - A payload that fails to build is not cached and the error is surfaced by
-//     the caller's build function writing its own response.
+//     the caller's build function writing its own response. Waiters coalesced
+//     onto that build relay the same empty result without writing anything.
 //   - Only successful (200) payloads are cached.
 func cachedJSONResponse(c *gin.Context, key string, ttl time.Duration, build func() (any, bool)) {
-	if payload, ok := redisGet(key); ok {
+	if payload, ok := responseCache.entries.Get(key); ok {
+		metrics.recordLocalResponseHit()
 		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 		return
 	}
 
+	if payload, ok := redisGet(key); ok {
+		// Re-populate the local tier with the remaining lifetime approximated by
+		// the full TTL: overshooting is bounded by the version-keyed name, and
+		// the ETag clock bucket already tolerates this width of staleness.
+		responseCache.entries.Add(key, payload)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+		return
+	}
+
+	call, leader := responseCache.startCall(key)
+	if !leader {
+		select {
+		case <-call.done:
+			if call.built {
+				metrics.recordResponseCoalesced()
+				c.Data(http.StatusOK, "application/json; charset=utf-8", call.payload)
+			}
+			// Leader's build failed and wrote its own error response; waiters
+			// write nothing here, matching the pre-coalescing behaviour where each
+			// request ran build() and wrote its own error.
+			return
+		case <-time.After(responseBuildWaitMax):
+			// The leader is stalling. Fall through and build independently.
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
+
+	// Deferred so every parked waiter is released even if build() or marshaling
+	// panics — the same barrier-safety rule as the TMDB inflight map.
+	defer close(call.done)
+
 	result, ok := build()
 	if !ok {
 		// build() already wrote an error response.
+		call.built = false
+		responseCache.endCall(key)
 		return
 	}
 
 	payload, err := json.Marshal(result)
 	if err != nil {
 		log.Printf("Cache: failed to marshal payload for %s: %v", key, err)
+		call.built = false
+		responseCache.endCall(key)
 		c.JSON(http.StatusOK, result)
 		return
 	}
 
+	call.payload, call.built = payload, true
+	responseCache.entries.Add(key, payload)
+	responseCache.endCall(key)
 	redisSet(key, payload, ttl)
 	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+}
+
+// startCall returns the in-flight build for key, marking this caller as the
+// leader responsible for running it when none exists.
+func (rc *responsePayloadCache) startCall(key string) (*responseCall, bool) {
+	rc.inflightMu.Lock()
+	defer rc.inflightMu.Unlock()
+	if call, ok := rc.inflight[key]; ok {
+		return call, false
+	}
+	call := &responseCall{done: make(chan struct{})}
+	rc.inflight[key] = call
+	return call, true
+}
+
+func (rc *responsePayloadCache) endCall(key string) {
+	rc.inflightMu.Lock()
+	delete(rc.inflight, key)
+	rc.inflightMu.Unlock()
+}
+
+// warmUserCaches rebuilds a user's derived payloads after their sync version
+// advanced, so the first request after a mutation reads them from cache
+// instead of paying for a full rebuild on the critical path.
+//
+// Best-effort by design: it runs detached from the finished request, coalesces
+// with any real request already building the same payload (the inflight map in
+// cachedJSONResponse), and every failure path simply leaves the next real
+// request to build synchronously — exactly the behaviour before this existed.
+func warmUserCaches(userID uint) {
+	version := currentUserVersion(userID)
+	homeKey := homeScheduleCacheKeyAt(userID, version)
+	listKey := watchlistCacheKeyAt(userID, version, false, false)
+
+	_, homePresent := responseCache.entries.Get(homeKey)
+	_, listPresent := responseCache.entries.Get(listKey)
+	if homePresent && listPresent {
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Cache warm: panic while rebuilding for user %d: %v", userID, r)
+			}
+		}()
+		scope := backgroundScope()
+		warmPayload(homeKey, func() (any, bool) {
+			return buildHomeSchedulePayload(userID, scope)
+		})
+		warmPayload(listKey, func() (any, bool) {
+			return buildWatchlistPayload(userID, false, false, scope)
+		})
+	}()
+}
+
+// warmPayload builds one cache entry into the local tier, then mirrors it to
+// Redis through the normal path. A concurrent request already building this
+// key wins: the warmer waits rather than duplicating the fan-out.
+func warmPayload(key string, produce func() (any, bool)) {
+	call, leader := responseCache.startCall(key)
+	if !leader {
+		select {
+		case <-call.done:
+		case <-time.After(responseBuildWaitMax):
+		}
+		return
+	}
+	// Deferred so a panicking build still releases anyone who joined the call.
+	defer close(call.done)
+
+	result, ok := produce()
+	if !ok {
+		responseCache.endCall(key)
+		return
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		responseCache.endCall(key)
+		return
+	}
+
+	call.payload, call.built = payload, true
+	responseCache.entries.Add(key, payload)
+	responseCache.endCall(key)
+	redisSet(key, payload, homeScheduleCacheTTL)
 }
 
 // homeScheduleCacheKey scopes the cached schedule to a user and their current

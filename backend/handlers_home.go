@@ -357,19 +357,21 @@ func handleHomeSchedule(c *gin.Context) {
 	userUID := userID.(uint)
 
 	cachedJSONResponse(c, homeScheduleCacheKeyAt(userUID, currentUserVersionFor(c, userUID)), homeScheduleCacheTTL, func() (any, bool) {
-		return buildHomeSchedule(c, userUID)
+		response, err := buildHomeSchedulePayload(userUID, scopeFrom(c))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return nil, false
+		}
+		return response, true
 	})
 }
 
-// buildHomeSchedule does the actual work. It reports ok=false only after writing
-// an error response itself.
-func buildHomeSchedule(c *gin.Context, userUID uint) (*HomeScheduleResponse, bool) {
-	scope := scopeFrom(c)
-
+// buildHomeSchedulePayload assembles the schedule without any HTTP concerns so
+// the same work can serve a request or warm the cache in the background.
+func buildHomeSchedulePayload(userUID uint, scope *callScope) (*HomeScheduleResponse, error) {
 	var dbItems []WatchlistItem
 	if err := db.Where("user_id = ?", userUID).Find(&dbItems).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch watchlist"})
-		return nil, false
+		return nil, fmt.Errorf("Failed to fetch watchlist")
 	}
 
 	// One pass over the history, grouped by title. Previously each show
@@ -481,5 +483,5 @@ func buildHomeSchedule(c *gin.Context, userUID uint) (*HomeScheduleResponse, boo
 		return response.MoviesUpcoming[i].FormattedDate < response.MoviesUpcoming[j].FormattedDate
 	})
 
-	return &response, true
+	return &response, nil
 }
