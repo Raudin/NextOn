@@ -54,6 +54,10 @@ func initTestDB(t *testing.T) {
 
 	db = conn
 
+	// The response cache and the background warmer are process-global and outlive
+	// a request, so every test gets a clean, quiet copy of them.
+	isolateResponseCache(t)
+
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 		db = previous

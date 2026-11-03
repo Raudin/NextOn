@@ -153,6 +153,14 @@ type metricsRegistry struct {
 	redisMisses atomic.Int64
 	redisErrors atomic.Int64
 
+	// Whole-response cache tier counters (see response_cache.go). localHits is
+	// the in-process tier; coalesced counts requests served by parking on a
+	// concurrent build instead of starting their own; evictions counts entries
+	// dropped because the tier reached its size bound.
+	localResponseHits atomic.Int64
+	responseCoalesced atomic.Int64
+	responseEvictions atomic.Int64
+
 	mu     sync.RWMutex
 	routes map[string]*routeStat
 }
@@ -249,6 +257,25 @@ func (m *metricsRegistry) recordOMDbStore(hit bool) {
 	m.omdbStoreMiss.Add(1)
 }
 
+// recordLocalResponseHit records a whole-response payload served from the
+// in-process tier of cachedJSONResponse.
+func (m *metricsRegistry) recordLocalResponseHit() {
+	m.localResponseHits.Add(1)
+}
+
+// recordResponseCoalesced records a request served by joining a concurrent
+// build of the same payload instead of starting its own.
+func (m *metricsRegistry) recordResponseCoalesced() {
+	m.responseCoalesced.Add(1)
+}
+
+// recordResponseEviction records an in-process payload dropped because the
+// tier reached responseCacheEntries. Eviction is the one way a warm tier
+// silently stops being warm, so it is worth counting.
+func (m *metricsRegistry) recordResponseEviction() {
+	m.responseEvictions.Add(1)
+}
+
 // routeSnapshot is the JSON shape for one route in /api/debug/stats.
 type routeSnapshot struct {
 	Route             string  `json:"route"`
@@ -300,15 +327,18 @@ func (m *metricsRegistry) snapshot() gin.H {
 	return gin.H{
 		"uptime_seconds": round2(time.Since(m.startedAt).Seconds()),
 		"totals": gin.H{
-			"tmdb_fetches":      m.tmdbFetches.Load(),
-			"tmdb_cache_hits":   m.tmdbHits.Load(),
-			"tmdb_cache_misses": m.tmdbMisses.Load(),
-			"omdb_fetches":      m.omdbFetches.Load(),
-			"omdb_store_hits":   m.omdbStoreHits.Load(),
-			"omdb_store_misses": m.omdbStoreMiss.Load(),
-			"redis_hits":        m.redisHits.Load(),
-			"redis_misses":      m.redisMisses.Load(),
-			"redis_errors":      m.redisErrors.Load(),
+			"tmdb_fetches":        m.tmdbFetches.Load(),
+			"tmdb_cache_hits":     m.tmdbHits.Load(),
+			"tmdb_cache_misses":   m.tmdbMisses.Load(),
+			"omdb_fetches":        m.omdbFetches.Load(),
+			"omdb_store_hits":     m.omdbStoreHits.Load(),
+			"omdb_store_misses":   m.omdbStoreMiss.Load(),
+			"redis_hits":          m.redisHits.Load(),
+			"redis_misses":        m.redisMisses.Load(),
+			"redis_errors":        m.redisErrors.Load(),
+			"response_local_hits": m.localResponseHits.Load(),
+			"response_coalesced":  m.responseCoalesced.Load(),
+			"response_evictions":  m.responseEvictions.Load(),
 		},
 		"routes": rows,
 	}

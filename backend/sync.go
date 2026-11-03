@@ -145,6 +145,12 @@ func recordSyncOp(userID uint, collection, opType, entityKey string, payload any
 	}
 
 	pruneSyncOps(userID)
+
+	// The version just advanced, so every version-keyed payload for this user is
+	// now cold. The warm is requested here rather than in the handlers because this
+	// is the only place that knows the version the mutation produced: warming a
+	// version that is about to be retired would be pure waste.
+	warmUserCaches(userID, version)
 	return version
 }
 
