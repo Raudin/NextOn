@@ -1,11 +1,15 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Platform, StyleSheet } from "react-native";
+import { Platform, StyleSheet, TouchableOpacity } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import {
   YStack,
+  XStack,
   Text,
   ScrollView,
 } from "tamagui";
+import Play from "lucide-react-native/icons/play";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
+import Sparkles from "lucide-react-native/icons/sparkles";
 import { useAuth } from "@/context/AuthContext";
 
 import ProfileHeader from "@/components/Profile/ProfileHeader";
@@ -355,6 +359,52 @@ export default function ProfileScreen() {
 
             {/* Level Card with circular SVG progress ring */}
             <LevelCard stats={stats} />
+
+            {/* Replay Entry Banner */}
+            <TouchableOpacity
+              onPress={() => replace("/replay")}
+              activeOpacity={0.85}
+            >
+              <XStack
+                bg="$backgroundElement"
+                borderWidth={1}
+                borderColor="$borderColor"
+                borderRadius="$4"
+                borderCurve="continuous"
+                p="$3.5"
+                ai="center"
+                jc="space-between"
+              >
+                <XStack ai="center" gap="$3">
+                  <YStack
+                    w={44}
+                    h={44}
+                    br="$10"
+                    bg="$blue9"
+                    ai="center"
+                    jc="center"
+                  >
+                    <Sparkles color="#FFFFFF" size={20} />
+                  </YStack>
+                  <YStack gap="$0.5">
+                    <XStack ai="center" gap="$1.5">
+                      <Text color="$color" fow="900" fos="$4">
+                        Nexton Replay
+                      </Text>
+                      <YStack px="$1.5" py="$0.5" br="$2" bg="$blue3">
+                        <Text color="$blue10" fos="$1" fow="800">
+                          NEW
+                        </Text>
+                      </YStack>
+                    </XStack>
+                    <Text color="$color" opacity={0.6} fos="$2" fow="500">
+                      Your top shows, genres, actors & viewing habits
+                    </Text>
+                  </YStack>
+                </XStack>
+                <ChevronRight color="gray" size={20} />
+              </XStack>
+            </TouchableOpacity>
 
             {/* 4-Stat Grid (No View All) */}
             <StatsGrid stats={stats} />
