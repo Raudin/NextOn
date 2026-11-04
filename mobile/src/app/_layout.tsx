@@ -130,6 +130,7 @@ function ThemeAppContainer() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="auth" />
           <Stack.Screen name="effects" />
+          <Stack.Screen name="replay" />
           <Stack.Screen name="media/[type]/[id]" />
           <Stack.Screen name="media/[type]/[id]/episode/[season]/[episode]" />
         </Stack>

@@ -310,6 +310,7 @@ func newRouter() *gin.Engine {
 
 	// Profile (Private, authenticated)
 	r.GET("/api/profile", CachePolicyMiddleware(privateCachePolicy), AuthMiddleware(), handleGetProfile)
+	r.GET("/api/replay", CachePolicyMiddleware(privateCachePolicy), AuthMiddleware(), handleGetReplay)
 	r.PUT("/api/profile", CachePolicyMiddleware(noStoreCachePolicy), AuthMiddleware(), handleUpdateProfile)
 	r.POST("/api/profile/clear-history", CachePolicyMiddleware(noStoreCachePolicy), AuthMiddleware(), handleClearWatchHistory)
 	r.DELETE("/api/profile/account", CachePolicyMiddleware(noStoreCachePolicy), AuthMiddleware(), handleDeleteAccount)

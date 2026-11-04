@@ -747,3 +747,48 @@ export const deleteUserAccount = () =>
   apiFetch<{ message: string }>("/api/profile/account", {
     method: "DELETE",
   });
+
+// ---------------------------------------------------------------------- replay
+
+export type ReplayPeriod = "this_week" | "this_month" | "this_year" | "all_time";
+
+export interface ReplayHeroCard {
+  id: string;
+  label: string;
+  value: string;
+  detail: string;
+  artwork_url?: string;
+}
+
+export interface ReplayRow {
+  rank: number;
+  title: string;
+  subtitle?: string;
+  artwork_url?: string;
+  count: number;
+}
+
+export interface HabitsSummary {
+  distinct_movies: number;
+  distinct_shows: number;
+  total_episodes: number;
+  peak_hour?: number;
+  busiest_day?: string;
+  busiest_day_count: number;
+}
+
+export interface ReplaySummary {
+  period: ReplayPeriod;
+  period_label: string;
+  member_since: string;
+  cards: ReplayHeroCard[];
+  top_shows: ReplayRow[];
+  top_genres: ReplayRow[];
+  top_actors: ReplayRow[];
+  top_networks: ReplayRow[];
+  habits: HabitsSummary;
+  is_empty: boolean;
+}
+
+export const fetchReplaySummary = (period: ReplayPeriod = "this_year") =>
+  apiFetch<ReplaySummary>(`/api/replay?period=${period}`);
